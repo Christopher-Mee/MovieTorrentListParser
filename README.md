@@ -10,3 +10,7 @@ pip install -r requirements.txt --use-pep517
 Usage
 
 python ParseTorrentListToCSV.py 'list.txt'
+
+CSV Output
+
+Year, Title, Resolution/Quality, IMDB link
