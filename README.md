@@ -14,3 +14,7 @@ python ParseTorrentListToCSV.py 'list.txt'
 CSV Output
 
 Year, Title, Resolution/Quality, IMDB link
+
+Known issues
+
+4K is not parsed, leaving resolution field empty.
