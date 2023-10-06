@@ -17,4 +17,4 @@ Year, Title, Resolution/Quality, IMDB link
 
 Known issues
 
-4K is not parsed, leaving resolution field empty.
+4K is not parsed, leaving resolution field empty. (Forked dependency has some regressions in output, reverting back to original will fix issue)
