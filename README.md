@@ -18,4 +18,4 @@ Year, Title, Resolution/Quality, IMDB link
 Known issues
 
 4K is not parsed, leaving resolution field empty. (Forked dependency has some regressions in output, reverting back to original will fix issue)  
-A movie useing a year as the title will produce bad output which is what the forked dependency was supposed to fix.
+A movie using a year as the title will produce bad output which is what the forked dependency was supposed to fix.
