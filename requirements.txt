@@ -1,4 +1,4 @@
 cinemagoer @ git+https://github.com/cinemagoer/cinemagoer
 pandas==2.1.1
-parse-torrent-name @ git+https://github.com/dchevell/parse-torrent-name@3de5edfd3774d202dc00cccbc8b9c34a428479d0
+parse-torrent-title @ git+https://github.com/platelminto/parse-torrent-title
 pyperclip==1.8.2
