@@ -56,7 +56,7 @@ def printError(*errorMsg):
 VALID_ARGUMENT_COUNT = 2
 TEXT_FILE_ARGUMENT = 1
 USAGE = "USAGE: ParseTorrentListToCSV.py [-tf]\n-tf\t\tText-file filename (.txt)"
-VALID_ARGUMENT = "SUCCESS: CSV output copied to clipboard."
+VALID_ARGUMENT = "SUCCESS: CSV results copied to your clipboard."
 PROGRESS_STR = "% COMPLETED"
 INVALID_ARGUMENT = "INVALID ARGUMENT: "
 FILE_NOT_FOUND = "No such file - "
