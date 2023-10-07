@@ -3,7 +3,7 @@
 # Parse and convert a list of p2p movie file names into CSV format
 import sys  # System
 import re  # Regex
-import PTN  # parse-torrent-name
+import PTN  # parse-torrent-title
 import pandas as pd  # Pandas (dataframes)
 import numpy as np  # Numpy
 from imdb import Cinemagoer  # Cinemagoer
