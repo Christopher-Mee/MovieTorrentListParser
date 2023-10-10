@@ -15,3 +15,8 @@ python ParseTorrentListToCSV.py 'list.txt'
 CSV Output
 
 Year, Title, Resolution/Quality, IMDB link
+
+Known Issues
+'8-bit Christmas' movie title is not parsed correctly.
+Wrong IMDB link is hard to find, since the movie title is NOT overwritten with the IMDB version.
+Need to have atleast one movie with a resolution and source (Web, Blu-Ray).
