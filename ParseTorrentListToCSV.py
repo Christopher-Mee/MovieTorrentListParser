@@ -10,6 +10,13 @@ from imdb import Cinemagoer  # Cinemagoer
 import pyperclip  # Pyperclip
 
 
+def isArgumentPresent(OFFSET, VALID_ARGUMENT):
+    return (
+        len(sys.argv) >= MINIMUM_ARGUMENT_COUNT + OFFSET
+        and sys.argv[(TEXT_FILE_ARGUMENT + OFFSET)].lower() == VALID_ARGUMENT
+    )
+
+
 def isTextFile(str):
     pattern = "^.*\.txt$"
     return re.search(pattern, str)
@@ -22,6 +29,7 @@ def getIMDBLink(IMDB, title, year):
 
 
 # Wrapper which prints progress for slow internet operations
+# Check for user flag and modify output to work properly with excel
 def getIMDBLinkWrapper(IMDB, title, year):
     global processedMovies
     if processedMovies == 0:
@@ -31,6 +39,9 @@ def getIMDBLinkWrapper(IMDB, title, year):
 
     processedMovies += 1
     printProgress((processedMovies / movieCount) * 100)
+
+    if isArgumentPresent(HYPERLINK_ARGUMENT_OFFSET, EXCEL_HYPERLINK):
+        return '=HYPERLINK("' + link + '")'
 
     return link
 
@@ -42,7 +53,7 @@ def printProgress(progress):
     sign = " %"
     progress = f"{progress:.1f}"[:-2] + " COMPLETE"
     print(f"{bar}{sign}{progress: >{12}}", end="\r")
-    
+
     # no bar
     # print(f'{f"{progress:.1f}"[:-2]: >3}' + PROGRESS_STR, end="\r")
 
@@ -53,11 +64,33 @@ def printError(*errorMsg):
     sys.exit(1)
 
 
-VALID_ARGUMENT_COUNT = 2
+MINIMUM_ARGUMENT_COUNT = 2
+
+# Argumemts
 TEXT_FILE_ARGUMENT = 1
-USAGE = "USAGE: ParseTorrentListToCSV.py [-tf]\n-tf\t\tText-file filename (.txt)"
-VALID_ARGUMENT = "SUCCESS: CSV results copied to your clipboard."
+APPENDING = 2
+HYPERLINK_STYLE = 3
+
+# Argumemt offsets 
+APPENDING_ARGUMENT_OFFSET = 1
+HYPERLINK_ARGUMENT_OFFSET = 2
+
+# Valid argument input
+EXCEL_HYPERLINK = "excel"
+
+# Argument descriptors
+TF = "-tf\t\tText-file filename (.txt)"
+A = "-a\t\tAppending [true, false, empty (default)]: Removes header from CSV."
+LS = "-ls\t\tHyperlink style [excel, EMPTY (default)]: Solves hyperlink issues when importing CSV."
+
+# Script Manual
+USAGE = "USAGE: ParseTorrentListToCSV.py [-tf] [-ls] [-a]\n" + TF + "\n" + A + "\n" + LS
+
+# Valid Output
 PROGRESS_STR = "% COMPLETED"
+VALID_ARGUMENT = "SUCCESS: CSV results copied to your clipboard."
+
+# Invalid Output
 INVALID_ARGUMENT = "INVALID ARGUMENT: "
 FILE_NOT_FOUND = "No such file - "
 INVALID_FILENAME = "Cannot parse filename"
@@ -66,7 +99,7 @@ movieCount = 0  # number of movies parsed from file
 processedMovies = 0  # number of movies finished processing
 
 # valid argument(s)
-if len(sys.argv) == VALID_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUMENT]):
+if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUMENT]):
     textFile = sys.argv[TEXT_FILE_ARGUMENT]
     IMDB = Cinemagoer()  # IMDB database access
 
@@ -84,6 +117,17 @@ if len(sys.argv) == VALID_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUM
 
     # truncate table to retrieve desired data
     # causes SettingWithCopyWarning if not copied and used as a view
+    if (
+        "resolution" not in parsedTextFile.columns
+        and "quality" not in parsedTextFile.columns
+    ):
+        parsedTextFile["resolution"] = np.nan
+        parsedTextFile["quality"] = np.nan
+    elif "resolution" not in parsedTextFile.columns:
+        parsedTextFile["resolution"] = np.nan
+    elif "quality" not in parsedTextFile.columns:
+        parsedTextFile["quality"] = np.nan
+
     parsedMovies = parsedTextFile[["year", "title", "resolution", "quality"]].copy()
     movieCount = parsedMovies.shape[0]
 
@@ -107,7 +151,9 @@ if len(sys.argv) == VALID_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUM
 
     # replace NaN values and clean up whitespace in df
     parsedMovies = parsedMovies.replace(r"^\s*$", np.nan, regex=True)
-    parsedMovies.columns = parsedMovies.columns.str.strip()
+    parsedMovies = parsedMovies.apply(
+        lambda x: x.str.strip() if x.dtype == "object" else x
+    )
 
     # get IMDB links
     # iterate through df https://stackoverflow.com/a/55557758
@@ -121,7 +167,11 @@ if len(sys.argv) == VALID_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUM
         [parsedMovies, IMDB_links], axis=1
     )  # append IMDB_links to movies
 
-    csv = parsedMovies.to_csv(index=False)  # convert df to CSV
+    # convert df to CSV
+    if isArgumentPresent(APPENDING_ARGUMENT_OFFSET, "true"):
+        csv = parsedMovies.to_csv(header=False, index=False)
+    else:
+        csv = parsedMovies.to_csv(header=True, index=False)
 
     pyperclip.copy(csv)  # copy to clipboard
     print("\n" + VALID_ARGUMENT)
