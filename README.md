@@ -10,6 +10,7 @@ pip install -r requirements.txt --use-pep517
 
 Usage
 
+ParseTorrentListToCSV.py -tf, -a, -ls  
 python ParseTorrentListToCSV.py 'list.txt'
 
 CSV Output
