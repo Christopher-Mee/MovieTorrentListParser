@@ -13,6 +13,13 @@ pip install -r requirements.txt --use-pep517
 ParseTorrentListToCSV.py -tf, -a, -ls  
 python ParseTorrentListToCSV.py 'list.txt'
 
+### Example usage ### 
+* You want to use a input file named - input.txt
+* Then use the output and append it to an existing csv with pre-existing headers
+* and your csv is an excel sheet which needs special formatting to properly hyperlink
+  
+python ParseTorrentListToCSV input.txt True Excel
+
 ### CSV Output ###
 
 Year, Title, Resolution/Quality, IMDB link
