@@ -12,6 +12,8 @@ import PTN  # parse-torrent-title
 import pyperclip  # Pyperclip
 from imdb import Cinemagoer, IMDbError  # Cinemagoer
 
+IGNORED_CONTENT_TYPES = {'podcast series', 'podcastseries', 'podcast'}
+
 query_variants = [
     lambda title, year: f"{title} {year}",
     lambda title, year: title,
@@ -43,6 +45,8 @@ def getIMDBLink(IMDB, title, year):
             search_str = search_variant(title, year)
             time.sleep(random.uniform(1, 3))  # Random delay
             results = IMDB.search_movie(search_str)
+            results = [m for m in results if m.get('kind') not in IGNORED_CONTENT_TYPES]
+
             if results:
                 movie = results[0]
                 return IMDB.get_imdbURL(movie)
