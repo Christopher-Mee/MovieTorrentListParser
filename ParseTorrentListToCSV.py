@@ -1,14 +1,28 @@
 # Christopher Mee
 # 2023-08-16
 # Parse and convert a list of p2p movie file names into CSV format
-import sys  # System
+import random
 import re  # Regex
-import PTN  # parse-torrent-title
-import pandas as pd  # Pandas (dataframes)
-import numpy as np  # Numpy
-from imdb import Cinemagoer  # Cinemagoer
-import pyperclip  # Pyperclip
+import sys  # System
+import time
 
+import numpy as np  # Numpy
+import pandas as pd  # Pandas (dataframes)
+import PTN  # parse-torrent-title
+import pyperclip  # Pyperclip
+from imdb import Cinemagoer, IMDbError  # Cinemagoer
+
+query_variants = [
+    lambda title, year: f"{title} {year}",
+    lambda title, year: title,
+    lambda title, year: f"{year} {title}",
+    lambda title, year: f"{title} ({year})",
+    lambda title, year: title.replace(":", ""),
+]
+
+def log_error(title, year, filename="INCOMPLETE_MOVIES.txt"):
+    with open(filename, "a", encoding="utf-8") as f:
+        f.write(f"{title}\t{year}\n")
 
 def isArgumentPresent(OFFSET, VALID_ARGUMENT):
     return (
@@ -18,14 +32,31 @@ def isArgumentPresent(OFFSET, VALID_ARGUMENT):
 
 
 def isTextFile(str):
-    pattern = "^.*\.txt$"
+    pattern = "^.*\.txt$" # type: ignore
     return re.search(pattern, str)
 
 
 def getIMDBLink(IMDB, title, year):
-    results = IMDB.search_movie(title + " " + str(year))
-    movie = results[0]
-    return IMDB.get_imdbURL(movie)
+    # NEW VERSION =====================================
+    for search_variant in random.sample(query_variants, len(query_variants)):
+        try:
+            search_str = search_variant(title, year)
+            time.sleep(random.uniform(1, 3))  # Random delay
+            results = IMDB.search_movie(search_str)
+            if results:
+                movie = results[0]
+                return IMDB.get_imdbURL(movie)
+        except IMDbError:
+            continue
+        except Exception:
+            continue
+    log_error(title, year)
+    return None
+
+    # ORIGINAL VERSION ================================
+    # results = IMDB.search_movie(title + " " + str(year))
+    # movie = results[0]
+    # return IMDB.get_imdbURL(movie)
 
 
 # Wrapper which prints progress for slow internet operations
@@ -37,13 +68,14 @@ def getIMDBLinkWrapper(IMDB, title, year):
 
     link = getIMDBLink(IMDB, title, year)
 
-    processedMovies += 1
-    printProgress((processedMovies / movieCount) * 100)
+    if link:
+        processedMovies += 1
+        printProgress((processedMovies / movieCount) * 100)
 
-    if isArgumentPresent(HYPERLINK_ARGUMENT_OFFSET, EXCEL_HYPERLINK):
-        return '=HYPERLINK("' + link + '")'
+        if isArgumentPresent(HYPERLINK_ARGUMENT_OFFSET, EXCEL_HYPERLINK):
+            return '=HYPERLINK("' + link + '")'
 
-    return link
+    return link # Link is left blank
 
 
 def printProgress(progress):
@@ -66,12 +98,12 @@ def printError(*errorMsg):
 
 MINIMUM_ARGUMENT_COUNT = 2
 
-# Argumemts
+# Arguments
 TEXT_FILE_ARGUMENT = 1
 APPENDING = 2
 HYPERLINK_STYLE = 3
 
-# Argumemt offsets 
+# Argument offsets 
 APPENDING_ARGUMENT_OFFSET = 1
 HYPERLINK_ARGUMENT_OFFSET = 2
 
@@ -139,7 +171,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
         {"Blu-ray": "", "WEB-DL": "WEB", "WEBRip": "WEB"}
     )
 
-    # remove NaN values before concatonation
+    # remove NaN values before concatenation
     parsedMovies[["resolution", "quality"]] = parsedMovies[
         ["resolution", "quality"]
     ].fillna("")
