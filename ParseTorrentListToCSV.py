@@ -12,8 +12,13 @@ import PTN  # parse-torrent-title
 import pyperclip  # Pyperclip
 from imdb import Cinemagoer, IMDbError  # Cinemagoer
 
-IGNORED_CONTENT_TYPES = {'podcast series', 'podcastseries', 'podcast'}
+# Ignored media types:
+IGNORED_CONTENT_TYPES = {'podcast series', 'podcastseries', 'podcast', 'podcast episode', 'podcastepisode'}
 
+# English Foreign combined title splitter
+FOREIGN_MOVIE_SPLITTER = ' AKA '
+
+# Movie search patterns:
 query_variants = [
     lambda title, year: f"{title} {year}",
     lambda title, year: title,
@@ -22,9 +27,11 @@ query_variants = [
     lambda title, year: title.replace(":", ""),
 ]
 
+
 def log_error(title, year, filename="INCOMPLETE_MOVIES.txt"):
     with open(filename, "a", encoding="utf-8") as f:
         f.write(f"{title}\t{year}\n")
+
 
 def isArgumentPresent(OFFSET, VALID_ARGUMENT):
     return (
@@ -38,22 +45,38 @@ def isTextFile(str):
     return re.search(pattern, str)
 
 
+# Handle foreign title pattern "'English title' AKA 'Foreign title'"
+def splitEnglishForeignTitle(title):
+    if FOREIGN_MOVIE_SPLITTER in title:
+        return [part.strip() for part in title.split(FOREIGN_MOVIE_SPLITTER)]
+    else:
+        return [title]
+
+
 def getIMDBLink(IMDB, title, year):
     # NEW VERSION =====================================
-    for search_variant in random.sample(query_variants, len(query_variants)):
-        try:
-            search_str = search_variant(title, year)
-            time.sleep(random.uniform(1, 3))  # Random delay
-            results = IMDB.search_movie(search_str)
-            results = [m for m in results if m.get('kind') not in IGNORED_CONTENT_TYPES]
+    movieTitleVariants = splitEnglishForeignTitle(title)
+    random.shuffle(movieTitleVariants)
 
-            if results:
-                movie = results[0]
-                return IMDB.get_imdbURL(movie)
-        except IMDbError:
-            continue
-        except Exception:
-            continue
+    for curTitle in movieTitleVariants:
+        for search_variant in random.sample(query_variants, len(query_variants)):
+            try:
+                search_str = search_variant(curTitle, year)
+                time.sleep(random.uniform(1, 3))  # Random delay
+                results = IMDB.search_movie(search_str)
+
+                # may not work if cinemagoer returns type 'movie' when the type isn't 'movie'
+                # try m['kind'] as a replacement for m.get('kind')
+                results = [m for m in results if m.get('kind') not in IGNORED_CONTENT_TYPES]
+
+                if results:
+                    movie = results[0]
+                    return IMDB.get_imdbURL(movie)
+            except IMDbError:
+                continue
+            except Exception:
+                continue
+
     log_error(title, year)
     return None
 
