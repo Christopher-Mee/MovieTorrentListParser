@@ -10,11 +10,11 @@ pip install -r requirements.txt --use-pep517
 
 
 ### TMDb setup ###
-Create a free TMDb account (if you don't have one): [https://www.themoviedb.org/signup](https://www.themoviedb.org/signup)
-Log in, then go to your API settings: [https://www.themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
-Click `Create` to request API access (choose `Developer` if prompted for use type).
-Copy your `API Read Access Token` (the long token starting with "eyJ..."), not the shorter `API Key`.
-Inside the `.env` file, replace `your_read_access_token_here` with your TMDb `API Read Access Token`.
+Create a free TMDb account (if you don't have one): [https://www.themoviedb.org/signup](https://www.themoviedb.org/signup)  
+Log in, then go to your API settings: [https://www.themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)  
+Click `Create` to request API access (choose `Developer` if prompted for use type).  
+Copy your `API Read Access Token` (the long token starting with "eyJ..."), not the shorter `API Key`.  
+Inside the `.env` file, replace `your_read_access_token_here` with your TMDb `API Read Access Token`.  
 
 
 ### Usage ###
