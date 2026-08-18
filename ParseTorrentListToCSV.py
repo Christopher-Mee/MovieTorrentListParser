@@ -1,31 +1,31 @@
 # Christopher Mee
 # 2023-08-16
 # Parse and convert a list of p2p movie file names into CSV format
-import random
 import re  # Regex
 import sys  # System
-import time
+from difflib import SequenceMatcher  # Str compare/search tool
 
 import numpy as np  # Numpy
 import pandas as pd  # Pandas (dataframes)
 import PTN  # parse-torrent-title
+import pycountry  # Movie languages
 import pyperclip  # Pyperclip
-from imdb import Cinemagoer, IMDbError  # Cinemagoer
 
-# Ignored media types:
-IGNORED_CONTENT_TYPES = {'podcast series', 'podcastseries', 'podcast', 'podcast episode', 'podcastepisode'}
+import tmdbClient as tmdb  # TMDB API
 
+# SETTINGS #####################################
 # English Foreign combined title splitter
-FOREIGN_MOVIE_SPLITTER = ' AKA '
+FOREIGN_MOVIE_SPLITTER = " AKA "
 
-# Movie search patterns:
-query_variants = [
-    lambda title, year: f"{title} {year}",
-    lambda title, year: title,
-    lambda title, year: f"{year} {title}",
-    lambda title, year: f"{title} ({year})",
-    lambda title, year: title.replace(":", ""),
-]
+# Language to ignore when tagging movie titles
+DEFAULT_LANGUAGE = "English"
+
+# TMDb Language code manual patches
+LANG_PATCHES_TMDB = {"cn": "Cantonese"}
+
+# Title similarity threshold
+THRESHOLD = 0.78
+################################################
 
 
 def log_error(title, year, filename="INCOMPLETE_MOVIES.txt"):
@@ -41,7 +41,7 @@ def isArgumentPresent(OFFSET, VALID_ARGUMENT):
 
 
 def isTextFile(str):
-    pattern = "^.*\.txt$" # type: ignore
+    pattern = r"\.txt$"
     return re.search(pattern, str)
 
 
@@ -53,56 +53,152 @@ def splitEnglishForeignTitle(title):
         return [title]
 
 
-def getIMDBLink(IMDB, title, year):
-    # NEW VERSION =====================================
-    movieTitleVariants = splitEnglishForeignTitle(title)
-    random.shuffle(movieTitleVariants)
+def buildIMDBLink(imdbId):
+    link = f"https://www.imdb.com/title/{imdbId}/"
 
-    for curTitle in movieTitleVariants:
-        for search_variant in random.sample(query_variants, len(query_variants)):
-            try:
-                search_str = search_variant(curTitle, year)
-                time.sleep(random.uniform(1, 3))  # Random delay
-                results = IMDB.search_movie(search_str)
+    if isArgumentPresent(HYPERLINK_ARGUMENT_OFFSET, EXCEL_HYPERLINK):
+        link = '=HYPERLINK("' + link + '")'
 
-                # may not work if cinemagoer returns type 'movie' when the type isn't 'movie'
-                # try m['kind'] as a replacement for m.get('kind')
-                results = [m for m in results if m.get('kind') not in IGNORED_CONTENT_TYPES]
+    return link
 
-                if results:
-                    movie = results[0]
-                    return IMDB.get_imdbURL(movie)
-            except IMDbError:
-                continue
-            except Exception:
-                continue
 
-    log_error(title, year)
+def langCodeToName(langCode):
+    if langCode.lower() in LANG_PATCHES_TMDB:
+        return LANG_PATCHES_TMDB[langCode]
+
+    lang = pycountry.languages.get(alpha_2=langCode)
+    return lang.name if lang else langCode.lower()
+
+
+def langNameToCode(langName):
+    for patchLangCode, patchLangName in LANG_PATCHES_TMDB.items():
+        if patchLangName.lower() == langName.lower():
+            return patchLangCode.lower()
+
+    return pycountry.languages.lookup(langName).alpha_2
+
+
+def findExactAlternativeTitle(localTitle, alterativeTitles):
+    localTitle = localTitle.lower().strip()
+    for t in alterativeTitles:
+        if t["title"].lower().strip() == localTitle:
+            return t["title"]
     return None
 
-    # ORIGINAL VERSION ================================
-    # results = IMDB.search_movie(title + " " + str(year))
-    # movie = results[0]
-    # return IMDB.get_imdbURL(movie)
+
+def findFuzzyAlternativeTitle(localTitle, alternativeTitles, threshold=THRESHOLD):
+    localTitle = localTitle.lower().strip()
+    bestMatch, bestScore = None, 0
+    for t in alternativeTitles:
+        score = SequenceMatcher(None, localTitle, t["title"].lower().strip()).ratio()
+        if score > bestScore:
+            bestMatch, bestScore = t["title"], score
+
+    # don't return early, since sequence matcher is highly inaccurate
+    return bestMatch if bestScore >= threshold else None
+
+
+def resolveRawTransliteratedTitle(localTransliteratedTitle, alternativeTitles):
+    match = findExactAlternativeTitle(localTransliteratedTitle, alternativeTitles)
+    if match:
+        return match
+
+    match = findFuzzyAlternativeTitle(
+        localTransliteratedTitle, alternativeTitles, threshold=0.8
+    )
+    if match:
+        return match
+
+    return localTransliteratedTitle
+
+
+def getLocalTransliteratedTitle(
+    apiResult, titleVariant, titleVariants, threshold=THRESHOLD
+):
+    # if one element only, title was not split
+    if len(titleVariants) == 1:
+        return None
+
+    rawTitle = apiResult.get("rawTitle")
+    if not rawTitle:
+        return None
+
+    isForeignTitle = (
+        SequenceMatcher(
+            None, titleVariant.lower().strip(), rawTitle.lower().strip()
+        ).ratio()
+        < threshold
+    )
+
+    if isForeignTitle:
+        return titleVariant
+
+    return next((v for v in titleVariants if v != titleVariant), None)
+
+
+def getMovieInfo(title, releaseYear, defaultLangCode):
+    movieTitleVariants = splitEnglishForeignTitle(title)
+    try:
+        for titleVariant in movieTitleVariants:
+            apiResult = tmdb.getMovieInfo(titleVariant, releaseYear, defaultLangCode)
+
+            imdbId = apiResult.get("imdbId")
+            if imdbId:
+                # Convert IMDB id to Link
+                apiResult["imdbId"] = buildIMDBLink(imdbId)
+                apiResult["IMDB"] = apiResult.pop("imdbId")
+
+                # Convert ISO 639-1 language code to full English name (fallback to code if unmapped)
+                apiResult["langCode"] = langCodeToName(apiResult["langCode"])
+                apiResult["lang"] = apiResult.pop("langCode")
+
+                # Convert originalTitle api value to a dummy entry in altTitles list
+                if apiResult.get("originalTitle"):
+                    apiResult["altTitles"] = (apiResult.get("altTitles") or []) + [
+                        {"title": apiResult["originalTitle"]}
+                    ]
+                apiResult.pop("originalTitle", None)
+
+                # Convert alternative titles list into a single transliterated title
+                localTransliteratedTitle = getLocalTransliteratedTitle(
+                    apiResult, titleVariant, movieTitleVariants
+                )
+                if localTransliteratedTitle:
+                    apiResult["altTitles"] = resolveRawTransliteratedTitle(
+                        localTransliteratedTitle, apiResult.get("altTitles")
+                    )
+                    apiResult["altTitle"] = apiResult.pop("altTitles")
+                else:
+                    apiResult["altTitle"] = None
+
+                return apiResult
+
+    except tmdb.APIError as e:
+        print(f"\n\n{e}\n")
+        sys.exit(1)  # Do not continue, API has failed!
+
+    # All searches returned None. Log error and continue to parse next movie.
+    # **API knowledge gap, not for logging code or network errors.
+    log_error(title, releaseYear)
+    return {"rawTitle": None, "altTitle": None, "lang": None, "IMDB": None}
 
 
 # Wrapper which prints progress for slow internet operations
 # Check for user flag and modify output to work properly with excel
-def getIMDBLinkWrapper(IMDB, title, year):
-    global processedMovies
+def getMovieInfoWrapper(title, releaseYear, defaultLangCode):
+    global processedMovies, incompleteMovieCount
     if processedMovies == 0:
         printProgress(0)
 
-    link = getIMDBLink(IMDB, title, year)
+    movieInfo = getMovieInfo(title, releaseYear, defaultLangCode)
 
-    if link:
-        processedMovies += 1
-        printProgress((processedMovies / movieCount) * 100)
+    if not movieInfo.get("IMDB"):
+        incompleteMovieCount += 1
 
-        if isArgumentPresent(HYPERLINK_ARGUMENT_OFFSET, EXCEL_HYPERLINK):
-            return '=HYPERLINK("' + link + '")'
+    processedMovies += 1
+    printProgress((processedMovies / movieCount) * 100)
 
-    return link # Link is left blank
+    return movieInfo
 
 
 def printProgress(progress):
@@ -130,7 +226,7 @@ TEXT_FILE_ARGUMENT = 1
 APPENDING = 2
 HYPERLINK_STYLE = 3
 
-# Argument offsets 
+# Argument offsets
 APPENDING_ARGUMENT_OFFSET = 1
 HYPERLINK_ARGUMENT_OFFSET = 2
 
@@ -140,7 +236,7 @@ EXCEL_HYPERLINK = "excel"
 # Argument descriptors
 TF = "-tf\t\tText-file filename (.txt)"
 A = "-a\t\tAppending [true, false, empty (default)]: Removes header from CSV."
-LS = "-ls\t\tHyperlink style [excel, EMPTY (default)]: Solves hyperlink issues when importing CSV."
+LS = "-ls\t\tHyperlink style [excel, empty (default)]: Solves hyperlink issues when importing CSV."
 
 # Script Manual
 USAGE = "USAGE: ParseTorrentListToCSV.py [-tf] [-ls] [-a]\n" + TF + "\n" + A + "\n" + LS
@@ -148,19 +244,26 @@ USAGE = "USAGE: ParseTorrentListToCSV.py [-tf] [-ls] [-a]\n" + TF + "\n" + A + "
 # Valid Output
 PROGRESS_STR = "% COMPLETED"
 VALID_ARGUMENT = "SUCCESS: CSV results copied to your clipboard."
+INCOMPLETE_DATA_WARNING = (
+    "WARNING: {incompleteMovieCount} parsed movie{plural} couldn't be found "
+    "online and failed to parse completely. See INCOMPLETE_MOVIES.txt."
+)
 
 # Invalid Output
 INVALID_ARGUMENT = "INVALID ARGUMENT: "
 FILE_NOT_FOUND = "No such file - "
 INVALID_FILENAME = "Cannot parse filename"
 
+# Foreign movies
+DEFAULT_LANGUAGE_CODE = langNameToCode(DEFAULT_LANGUAGE)
+
 movieCount = 0  # number of movies parsed from file
 processedMovies = 0  # number of movies finished processing
+incompleteMovieCount = 0  # number of movies not found on TMDB
 
 # valid argument(s)
 if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUMENT]):
-    textFile = sys.argv[TEXT_FILE_ARGUMENT]
-    IMDB = Cinemagoer()  # IMDB database access
+    textFile = sys.argv[TEXT_FILE_ARGUMENT]  # IMDB database access
 
     # parse file and concatenate to a df
     parsedTextFile = pd.DataFrame()
@@ -214,17 +317,36 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
         lambda x: x.str.strip() if x.dtype == "object" else x
     )
 
-    # get IMDB links
+    # add additional movie info (Raw titles and IMDB links)
     # iterate through df https://stackoverflow.com/a/55557758
-    IMDB_links = [
-        getIMDBLinkWrapper(IMDB, title, year)
+    movieInfo = [
+        getMovieInfoWrapper(title, year, DEFAULT_LANGUAGE_CODE)
         for title, year in zip(parsedMovies["title"], parsedMovies["year"])
     ]
-    IMDB_links = pd.DataFrame(IMDB_links, columns=["IMDB"])  # name column
+    dfMovieInfo = pd.DataFrame(movieInfo)
 
-    parsedMovies = pd.concat(
-        [parsedMovies, IMDB_links], axis=1
-    )  # append IMDB_links to movies
+    # combine English title with transliterated title
+    dfMovieInfo["rawTitle"] = np.where(
+        dfMovieInfo["altTitle"].notna(),
+        dfMovieInfo["altTitle"] + FOREIGN_MOVIE_SPLITTER + dfMovieInfo["rawTitle"],
+        dfMovieInfo["rawTitle"],
+    )
+
+    # tag title with foreign language
+    dfMovieInfo["rawTitle"] = np.where(
+        dfMovieInfo["lang"].str.upper() != DEFAULT_LANGUAGE.upper(),
+        dfMovieInfo["rawTitle"] + " [" + dfMovieInfo["lang"].str.upper() + "]",
+        dfMovieInfo["rawTitle"],
+    )
+
+    # delete lang column
+    dfMovieInfo = dfMovieInfo.loc[:, dfMovieInfo.columns != "lang"]
+
+    # overwrite title with rawTitle (including embedded tags)
+    parsedMovies["title"] = dfMovieInfo["rawTitle"].fillna(parsedMovies["title"])
+
+    # add IMDB column
+    parsedMovies["IMDB"] = dfMovieInfo["IMDB"]
 
     # convert df to CSV
     if isArgumentPresent(APPENDING_ARGUMENT_OFFSET, "true"):
@@ -232,7 +354,19 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
     else:
         csv = parsedMovies.to_csv(header=True, index=False)
 
+    # Output newline to avoid overwriting progress bar
+    print()
+
+    # Warn if any movies were not found by the TMDB API
+    if incompleteMovieCount > 0:
+        print(
+            INCOMPLETE_DATA_WARNING.format(
+                incompleteMovieCount=incompleteMovieCount,
+                plural="" if incompleteMovieCount == 1 else "s",
+            )
+        )
+
     pyperclip.copy(csv)  # copy to clipboard
-    print("\n" + VALID_ARGUMENT)
+    print(VALID_ARGUMENT)
 else:  # invalid argument(s)
     printError(INVALID_ARGUMENT, INVALID_FILENAME)
