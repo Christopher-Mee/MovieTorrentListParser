@@ -31,7 +31,7 @@ python ParseTorrentListToCSV input.txt True Excel
 
 ### CSV Output ###
 
-Year, Title, Resolution/Quality, IMDB link
+Year, Title, Foreign Title, Language, Resolution/Quality, IMDB link
 
 ### Known Issues ###  
 
