@@ -14,6 +14,10 @@ import pyperclip  # Pyperclip
 import tmdbClient as tmdb  # TMDB API
 
 # SETTINGS #####################################
+COMBINE_DEFAULT_FOREIGN_TITLES = True
+ADD_TAGS_TO_TITLE = True
+UPPERCASE_CSV_HEADERS = True
+
 # English Foreign combined title splitter
 FOREIGN_MOVIE_SPLITTER = " AKA "
 
@@ -115,20 +119,24 @@ def resolveRawTransliteratedTitle(localTransliteratedTitle, alternativeTitles):
 def getLocalTransliteratedTitle(
     apiResult, titleVariant, titleVariants, threshold=THRESHOLD
 ):
-    # if one element only, title was not split
-    if len(titleVariants) == 1:
+    if not (rawTitle := apiResult.get("rawTitle")):
         return None
-
-    rawTitle = apiResult.get("rawTitle")
-    if not rawTitle:
-        return None
-
     isForeignTitle = (
         SequenceMatcher(
             None, titleVariant.lower().strip(), rawTitle.lower().strip()
         ).ratio()
         < threshold
     )
+    isOneTitleOnly = 1 == len(titleVariants)
+    isForeignMovie = apiResult.get("altTitles") or apiResult.get("originalTitle")
+    isTransliteratedTitleOnly = isOneTitleOnly and isForeignTitle and isForeignMovie
+    isDefaultLangTitleOnly = isOneTitleOnly and not isForeignTitle
+
+    if isTransliteratedTitleOnly:
+        return titleVariant
+
+    if isDefaultLangTitleOnly:
+        return None
 
     if isForeignTitle:
         return titleVariant
@@ -152,23 +160,24 @@ def getMovieInfo(title, releaseYear, defaultLangCode):
                 apiResult["langCode"] = langCodeToName(apiResult["langCode"])
                 apiResult["lang"] = apiResult.pop("langCode")
 
-                # Convert originalTitle api value to a dummy entry in altTitles list
-                if apiResult.get("originalTitle"):
-                    apiResult["altTitles"] = (apiResult.get("altTitles") or []) + [
-                        {"title": apiResult["originalTitle"]}
-                    ]
-                apiResult.pop("originalTitle", None)
-
-                # Convert alternative titles list into a single transliterated title
                 localTransliteratedTitle = getLocalTransliteratedTitle(
                     apiResult, titleVariant, movieTitleVariants
                 )
                 if localTransliteratedTitle:
+                    # Convert originalTitle api value to a dummy entry in altTitles list
+                    if apiResult.get("originalTitle"):
+                        apiResult["altTitles"] = (apiResult.get("altTitles") or []) + [
+                            {"title": apiResult["originalTitle"]}
+                        ]
+                    apiResult.pop("originalTitle", None)
+
+                    # Convert alternative titles list into a single transliterated title
                     apiResult["altTitles"] = resolveRawTransliteratedTitle(
                         localTransliteratedTitle, apiResult.get("altTitles")
                     )
                     apiResult["altTitle"] = apiResult.pop("altTitles")
                 else:
+                    apiResult.pop("altTitles")
                     apiResult["altTitle"] = None
 
                 return apiResult
@@ -308,7 +317,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
 
     # combine resolution and quality into the quality column
     # https://stackoverflow.com/a/76428891
-    parsedMovies["quality"] = parsedMovies["resolution"] + " " + parsedMovies["quality"]
+    parsedMovies["release"] = parsedMovies["resolution"] + " " + parsedMovies["quality"]
     parsedMovies = parsedMovies.loc[:, parsedMovies.columns != "resolution"]
 
     # replace NaN values and clean up whitespace in df
@@ -326,21 +335,24 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
     dfMovieInfo = pd.DataFrame(movieInfo)
 
     # combine English title with transliterated title
-    dfMovieInfo["rawTitle"] = np.where(
-        dfMovieInfo["altTitle"].notna(),
-        dfMovieInfo["altTitle"] + FOREIGN_MOVIE_SPLITTER + dfMovieInfo["rawTitle"],
-        dfMovieInfo["rawTitle"],
-    )
+    if COMBINE_DEFAULT_FOREIGN_TITLES:
+        dfMovieInfo["rawTitle"] = np.where(
+            dfMovieInfo["altTitle"].notna(),
+            dfMovieInfo["altTitle"] + FOREIGN_MOVIE_SPLITTER + dfMovieInfo["rawTitle"],
+            dfMovieInfo["rawTitle"],
+        )
+    else:
+        parsedMovies["foreign title"] = dfMovieInfo["altTitle"]
 
     # tag title with foreign language
-    dfMovieInfo["rawTitle"] = np.where(
-        dfMovieInfo["lang"].str.upper() != DEFAULT_LANGUAGE.upper(),
-        dfMovieInfo["rawTitle"] + " [" + dfMovieInfo["lang"].str.upper() + "]",
-        dfMovieInfo["rawTitle"],
-    )
-
-    # delete lang column
-    dfMovieInfo = dfMovieInfo.loc[:, dfMovieInfo.columns != "lang"]
+    if ADD_TAGS_TO_TITLE:
+        dfMovieInfo["rawTitle"] = np.where(
+            dfMovieInfo["lang"].str.upper() != DEFAULT_LANGUAGE.upper(),
+            dfMovieInfo["rawTitle"] + " [" + dfMovieInfo["lang"].str.upper() + "]",
+            dfMovieInfo["rawTitle"],
+        )
+    else:
+        parsedMovies["language"] = dfMovieInfo["lang"]
 
     # overwrite title with rawTitle (including embedded tags)
     parsedMovies["title"] = dfMovieInfo["rawTitle"].fillna(parsedMovies["title"])
@@ -348,9 +360,23 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
     # add IMDB column
     parsedMovies["IMDB"] = dfMovieInfo["IMDB"]
 
+    # set final order of output
+    finalColumnOrder = ["year", "title", "release", "IMDB"]
+
+    if not COMBINE_DEFAULT_FOREIGN_TITLES:
+        finalColumnOrder.insert(finalColumnOrder.index("title") + 1, "foreign title")
+
+    if not ADD_TAGS_TO_TITLE:
+        finalColumnOrder.insert(finalColumnOrder.index("release"), "language")
+
+    parsedMovies = parsedMovies[finalColumnOrder]
+
     # convert df to CSV
+    # if appending data no headers needed
     if isArgumentPresent(APPENDING_ARGUMENT_OFFSET, "true"):
         csv = parsedMovies.to_csv(header=False, index=False)
+    elif UPPERCASE_CSV_HEADERS:
+        csv = parsedMovies.rename(columns=str.upper).to_csv(header=True, index=False)
     else:
         csv = parsedMovies.to_csv(header=True, index=False)
 
