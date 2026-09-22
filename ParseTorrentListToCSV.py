@@ -4,7 +4,7 @@
 import re  # Regex
 import sys  # System
 from difflib import SequenceMatcher  # Str compare/search tool
-from enum import Enum, auto  # Ternary output solution
+from enum import Enum, auto  # Ternary return solution
 
 import numpy as np  # Numpy
 import pandas as pd  # Pandas (dataframes)
@@ -16,7 +16,7 @@ import tmdbClient as tmdb  # TMDB API
 
 # SETTINGS #####################################
 # CSV Headers
-UPPERCASE_CSV_HEADERS = False
+UPPERCASE_CSV_HEADERS = True
 
 # Movie title
 COMBINE_DEFAULT_FOREIGN_TITLES = True

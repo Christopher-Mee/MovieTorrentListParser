@@ -43,7 +43,7 @@ class AppendToResponse(str, Enum):
     ALTERNATIVE_TITLES = "alternative_titles"
 
 
-CALL_BUILDER_DESCRIPTIONS = {
+APPEND_TO_RESPONSE_DESCRIPTIONS = {
     # Describe what each appended api call returns.
     # Used when building appended api call error messages.
     AppendToResponse.ALTERNATIVE_TITLES: "movies' alternative titles",
@@ -140,7 +140,7 @@ def describeCallType(baseLabel, appendedToCallList):
         return baseLabel
 
     appendedToCallDescriptionsStr = ", ".join(
-        CALL_BUILDER_DESCRIPTIONS[a] for a in appendedToCallList
+        APPEND_TO_RESPONSE_DESCRIPTIONS[a] for a in appendedToCallList
     )
 
     return f"{baseLabel} (including {appendedToCallDescriptionsStr})"
