@@ -6,6 +6,7 @@
 # Why? - Cinemagoer now wants the user to run a local DB that
 # takes an hour to build each time IMDB is updated
 import os
+from enum import Enum
 
 import requests  # API calls
 from dotenv import load_dotenv  # API key retrieval
@@ -34,7 +35,19 @@ IMDB_ID = "imdb_id"
 # CALL TYPES/ERROR DESCRIPTORS
 MOVIE_SEARCH = "movie search results"
 EXTERNAL_IDS = "movies' external IDs"
-ALTERNATIVE_TITLES = "movies' alternative titles"
+ADDITIONAL_MOVIE_INFO = "movie details"
+
+
+class AppendToResponse(str, Enum):
+    # Exact TMDb query parameter 'values' accepted by the `append_to_response` query parameter 'key'.
+    ALTERNATIVE_TITLES = "alternative_titles"
+
+
+CALL_BUILDER_DESCRIPTIONS = {
+    # Describe what each appended api call returns.
+    # Used when building appended api call error messages.
+    AppendToResponse.ALTERNATIVE_TITLES: "movies' alternative titles",
+}
 
 # FINAL VARIABLES
 BASE_URL = "https://api.themoviedb.org/3"
@@ -121,16 +134,36 @@ def getExternalIDs(internalID):
         handleApiErrors(EXTERNAL_IDS, response)
 
 
+# Describe which api call caused an error
+def describeCallType(baseLabel, appendedToCallList):
+    if not appendedToCallList:
+        return baseLabel
+
+    appendedToCallDescriptionsStr = ", ".join(
+        CALL_BUILDER_DESCRIPTIONS[a] for a in appendedToCallList
+    )
+
+    return f"{baseLabel} (including {appendedToCallDescriptionsStr})"
+
+
 @rateLimited(rateLimiter)
-def getAlternativeTitles(internalID):
-    url = f"{BASE_URL}/movie/{internalID}/alternative_titles"
-    response = session.get(url)
+def getAdditionalMovieInfo(internalID, appendedToCallList):
+    url = f"{BASE_URL}/movie/{internalID}"
+    response = session.get(
+        url,
+        params={
+            "append_to_response": ",".join(
+                appendParameterValue.value
+                for appendParameterValue in appendedToCallList
+            )
+        },
+    )
 
     if OK == response.status_code:
-        alternativeTitles = response.json()
-        return alternativeTitles
+        return response.json()
     else:
-        handleApiErrors(ALTERNATIVE_TITLES, response)
+        callType = describeCallType(ADDITIONAL_MOVIE_INFO, appendedToCallList)
+        handleApiErrors(callType, response)
 
 
 # Search and return pulled movie info from the 'The Movie Data Base'.
@@ -139,7 +172,9 @@ def getAlternativeTitles(internalID):
 # 2) 'IMDB' ID
 # 'None' for all fields, if NO search results are found, or the 'IMDB' ID is unknown.
 def getMovieInfo(title, releaseYear, defaultLangCode):
-    rawTitle = originalTitle = alternativeTitles = langCode = imdbId = None
+    rawTitle = originalTitle = originCountry = alternativeTitles = langCode = imdbId = (
+        None
+    )
     Done = forceYearFallback = False
     while not Done:
         movieSearchResults = searchMovie(
@@ -170,8 +205,15 @@ def getMovieInfo(title, releaseYear, defaultLangCode):
         langCode = firstResult.get("original_language")
 
         isForeignMovie = defaultLangCode != langCode
-        if isForeignMovie and (alternativeTitles := getAlternativeTitles(internalId)):
-            alternativeTitles = alternativeTitles.get("titles")
+        if isForeignMovie and (
+            additionalMovieInfo := getAdditionalMovieInfo(
+                internalId, [AppendToResponse.ALTERNATIVE_TITLES]
+            )
+        ):
+            alternativeTitles = additionalMovieInfo.get("alternative_titles", {}).get(
+                "titles", []
+            )
+            originCountry = additionalMovieInfo.get("origin_country")
             originalTitle = firstResult["original_title"]
 
         Done = True
@@ -179,6 +221,7 @@ def getMovieInfo(title, releaseYear, defaultLangCode):
     return {
         "rawTitle": rawTitle,
         "originalTitle": originalTitle,
+        "originCountry": originCountry,
         "altTitles": alternativeTitles,
         "langCode": langCode,
         "imdbId": imdbId,
