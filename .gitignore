@@ -161,3 +161,6 @@ cython_debug/
 
 # Local editor settings
 .vscode/settings.json
+
+# Datasets folder for personal use only
+datasets/
