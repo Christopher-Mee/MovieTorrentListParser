@@ -5,6 +5,7 @@ import re  # Regex
 import sys  # System
 from difflib import SequenceMatcher  # Str compare/search tool
 from enum import Enum, auto  # Ternary return solution
+from pathlib import Path  # File path handling
 
 import numpy as np  # Numpy
 import pandas as pd  # Pandas (dataframes)
@@ -13,6 +14,7 @@ import pycountry  # Movie languages
 import pyperclip  # Pyperclip
 
 import tmdbClient as tmdb  # TMDB API
+from ConsoleDebug import ConsoleDebug  # Debugging output
 
 # SETTINGS #####################################
 # CSV Headers
@@ -27,6 +29,9 @@ COMBINE_RELEASE_AND_EXCESS_TAGS = True
 FORMAT_EXCESS_TAGS_IN_RELEASE = True
 UPPERCASE_TAGS = True
 ADD_SPACE_BETWEEN_TAGS = True
+
+# Debugging
+LEFT_JUSTIFY_DEBUG_OUTPUT = True
 
 # English Foreign combined title splitter
 FOREIGN_MOVIE_SPLITTER = " AKA "
@@ -312,6 +317,46 @@ def printError(*errorMsg):
     sys.exit(1)
 
 
+def dfToStringLJust(df, naRep="NaN", index=True):
+    dfFilled = df.fillna(naRep)
+    widths = {
+        col: max(len(str(col)), dfFilled[col].astype(str).str.len().max())
+        for col in dfFilled.columns
+    }
+
+    def makeFmt(w):
+        def fmt(x):
+            return f"{str(x):<{w}}"
+
+        return fmt
+
+    formatters = {col: makeFmt(w) for col, w in widths.items()}
+    return dfFilled.to_string(justify="left", formatters=formatters, index=index)
+
+
+def ptnFilterDebug(parsedMovies, debugOut):
+    dfDebug = parsedMovies[["year", "title", "episodeName", "excess"]]
+    naRepStr = ""
+    debugOut = ConsoleDebug()
+
+    if UPPERCASE_CSV_HEADERS:
+        dfDebug.columns = dfDebug.columns.str.upper()
+
+    # print debugging info to help build PTN filtering rules
+    debugStr = (
+        dfToStringLJust(dfDebug, naRep=naRepStr)
+        if LEFT_JUSTIFY_DEBUG_OUTPUT
+        else dfDebug.to_string(na_rep=naRepStr)
+    )
+    debugOut.print("Tag Filter Screening:\n\n" + debugStr)
+
+    # prompt user to continue or exit
+    if debugOut.ask("\nClear debug output and continue? [Y/N]: "):
+        debugOut.clear()
+    else:
+        sys.exit(0)
+
+
 def deleteColumn(df, cols):
     if isinstance(cols, str):
         cols = [cols]
@@ -381,27 +426,40 @@ def extractExcessMovieTag(parsedMovies, formatted=True, returnLists=False):
     return labels.reindex(parsedMovies.index, fill_value="")
 
 
-MINIMUM_ARGUMENT_COUNT = 2
+MINIMUM_ARGUMENT_COUNT = 2  # script name + text file input
 
-# Arguments
+# Arguments indexes
 TEXT_FILE_ARGUMENT = 1
 APPENDING = 2
 HYPERLINK_STYLE = 3
+DEBUGGING = 4
 
-# Argument offsets
-APPENDING_ARGUMENT_OFFSET = 1
-HYPERLINK_ARGUMENT_OFFSET = 2
+# Argument offsets, relative to the text file input argument
+APPENDING_ARGUMENT_OFFSET = APPENDING - 1
+HYPERLINK_ARGUMENT_OFFSET = HYPERLINK_STYLE - 1
+DEBUGGING_ARGUMENT_OFFSET = DEBUGGING - 1
 
-# Valid argument input
+# Valid link style argument input
 EXCEL_HYPERLINK = "excel"
 
-# Argument descriptors
-TF = "-tf\t\tText-file filename (.txt)"
-A = "-a\t\tAppending [true, false, empty (default)]: Removes header from CSV."
-LS = "-ls\t\tHyperlink style [excel, empty (default)]: Solves hyperlink issues when importing CSV."
+# Argument descriptions - determines the order of arguments in the usage message
+ARGUMENT_DESCRIPTORS = {
+    "TF": "Text-file [(filename.txt)]: Torrent list text file being parsed into a CSV.",
+    "A": "Appending [true, false, empty (default)]: Removes header from CSV.",
+    "LS": "Hyperlink style [excel, empty (default)]: Solves hyperlink issues when importing CSV.",
+    "D": "Debugging [true, false, empty (default)]: Enables debug output.",
+}
 
 # Script Manual
-USAGE = "USAGE: ParseTorrentListToCSV.py [-tf] [-ls] [-a]\n" + TF + "\n" + A + "\n" + LS
+SCRIPT_NAME = Path(sys.argv[0]).name
+USAGE = (
+    "\n"
+    + f"USAGE: {SCRIPT_NAME} "
+    + " ".join(f"[-{a.lower()}]" for a in ARGUMENT_DESCRIPTORS)
+    + "\n"
+    + "\n".join(f"-{a.lower()}\t{d}" for a, d in ARGUMENT_DESCRIPTORS.items())
+    + "\n"
+)
 
 # Valid Output
 PROGRESS_STR = "% COMPLETED"
@@ -414,7 +472,7 @@ INCOMPLETE_DATA_WARNING = (
 # Invalid Output
 INVALID_ARGUMENT = "INVALID ARGUMENT: "
 FILE_NOT_FOUND = "No such file - "
-INVALID_FILENAME = "Cannot parse filename"
+INVALID_FILENAME = "Failed to parse filename. Expected a '.txt' file."
 
 # Foreign movies
 DEFAULT_LANGUAGE_CODE = langNameToCode(DEFAULT_LANGUAGE)
@@ -455,6 +513,10 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
         ]
     ).copy()
     movieCount = parsedMovies.shape[0]
+
+    # print debugging info to help build PTN filtering rules
+    if isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true"):
+        ptnFilterDebug(parsedMovies, ConsoleDebug())
 
     # remap resolution and quality values (personal preference)
     parsedMovies["resolution"] = parsedMovies["resolution"].replace(

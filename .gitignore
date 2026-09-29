@@ -164,3 +164,6 @@ cython_debug/
 
 # Datasets folder for personal use only
 datasets/
+
+# Local launch configurations for VS Code
+.vscode/launch.json
