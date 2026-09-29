@@ -19,7 +19,7 @@ Inside the `.env` file, replace `your_read_access_token_here` with your TMDb `AP
 
 ### Usage ###
 
-ParseTorrentListToCSV.py -tf, -a, -ls  
+ParseTorrentListToCSV.py -tf, -a, -ls, -d  
 python ParseTorrentListToCSV.py 'list.txt'
 
 ### Example usage ### 
