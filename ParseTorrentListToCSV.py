@@ -31,7 +31,10 @@ UPPERCASE_TAGS = True
 ADD_SPACE_BETWEEN_TAGS = True
 
 # Debugging
+MATCH_TEXT_FILE_INDEX = True
 LEFT_JUSTIFY_DEBUG_OUTPUT = True
+FILTER_PTN_DEBUG_OUTPUT = True
+NA_REPLACEMENT_DEBUG_OUTPUT = ""
 
 # English Foreign combined title splitter
 FOREIGN_MOVIE_SPLITTER = " AKA "
@@ -336,22 +339,46 @@ def dfToStringLJust(df, naRep="NaN", index=True):
 
 def ptnFilterDebug(parsedMovies, debugOut):
     dfDebug = parsedMovies[["year", "title", "episodeName", "excess"]]
-    naRepStr = ""
     debugOut = ConsoleDebug()
+    debugTitle = "Tag Filter Screening:"
+    debugPrompt = "Clear debug output and continue? [Y/N]:"
+
+    if MATCH_TEXT_FILE_INDEX:
+        dfDebug.index = dfDebug.index + 1
+
+    if FILTER_PTN_DEBUG_OUTPUT:
+        # Filter out known bad values. The displayed output will still have
+        # known good values, so be careful when screening for bad values.
+        dfDebug["episodeName"] = extractMovieTags(
+            parsedMovies,
+            "episodeName",
+            useColNameAsTag=False,
+            formatTags=False,
+        )
+
+        # Filter out whitelisted Excess tags here
+        # Display str as single str and multi-str as list
+        dfDebug["excess"] = extractExcessMovieTag(
+            parsedMovies, formatted=False, returnLists=True, invert=True
+        ).map(
+            lambda tags: tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
+        )
 
     if UPPERCASE_CSV_HEADERS:
         dfDebug.columns = dfDebug.columns.str.upper()
+        debugTitle = debugTitle.upper()
+        debugPrompt = debugPrompt.upper()
 
     # print debugging info to help build PTN filtering rules
     debugStr = (
-        dfToStringLJust(dfDebug, naRep=naRepStr)
+        dfToStringLJust(dfDebug, naRep=NA_REPLACEMENT_DEBUG_OUTPUT)
         if LEFT_JUSTIFY_DEBUG_OUTPUT
-        else dfDebug.to_string(na_rep=naRepStr)
+        else dfDebug.to_string(na_rep=NA_REPLACEMENT_DEBUG_OUTPUT)
     )
-    debugOut.print("Tag Filter Screening:\n\n" + debugStr)
+    debugOut.print(f"{debugTitle}\n\n" + debugStr)
 
     # prompt user to continue or exit
-    if debugOut.ask("\nClear debug output and continue? [Y/N]: "):
+    if debugOut.ask(f"\n{debugPrompt} "):
         debugOut.clear()
     else:
         sys.exit(0)
@@ -383,7 +410,9 @@ def extractMovieTags(parsedMovies, col, useColNameAsTag=True, formatTags=True):
     return np.where(conditional, tagStr, "")
 
 
-def extractExcessMovieTag(parsedMovies, formatted=True, returnLists=False):
+def extractExcessMovieTag(
+    parsedMovies, formatted=True, returnLists=False, invert=False
+):
     # convert dictionary into lookup table
     lookupSeries = (
         pd.Series(EXCESS_TAG_WHITELIST, name="tags")
@@ -411,6 +440,25 @@ def extractExcessMovieTag(parsedMovies, formatted=True, returnLists=False):
     # compare matched count with required tag count
     matched = matched.merge(required, on="label")
     matched = matched.loc[matched["found"].eq(matched["required"])]
+
+    # return all non-whitelisted values. This is useful for debugging and
+    # finding new tags to whitelist.
+    if invert:
+        # the filter reasons in labels but the output is in tags, so map the
+        # satisfied (row, label) pairs back to their tags, then subtract those
+        consumed = matches.merge(matched[["row", "label"]], on=["row", "label"])[
+            ["row", "tags"]
+        ].drop_duplicates()
+        unmatched = values.merge(
+            consumed, on=["row", "tags"], how="left", indicator=True
+        )
+        unmatched = unmatched.loc[
+            unmatched["_merge"].eq("left_only")
+            & unmatched["tags"].notna()
+            & unmatched["tags"].str.len().gt(1)  # drop single-character values
+        ]
+
+        matched = unmatched.rename(columns={"tags": "label"})[["row", "label"]]
 
     # collect labels for each original row and restore original index
     if returnLists:
