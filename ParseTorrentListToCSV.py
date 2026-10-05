@@ -25,10 +25,12 @@ COMBINE_DEFAULT_FOREIGN_TITLES = True
 
 # Tags
 ADD_TAGS_TO_TITLE = True
-COMBINE_RELEASE_AND_EXCESS_TAGS = True
-FORMAT_EXCESS_TAGS_IN_RELEASE = True
 UPPERCASE_TAGS = True
 ADD_SPACE_BETWEEN_TAGS = True
+
+# Excess Tags
+COMBINE_RELEASE_AND_EXCESS_TAGS = True
+FORMAT_EXCESS_TAGS_IN_RELEASE = True
 
 # Debugging
 MATCH_TEXT_FILE_INDEX = True
@@ -39,7 +41,8 @@ NA_REPLACEMENT_DEBUG_OUTPUT = ""
 # English Foreign combined title splitter
 FOREIGN_MOVIE_SPLITTER = " AKA "
 
-# Language to ignore when tagging movie titles
+# Language
+# default lang not shown as a tag, only foreign langs
 DEFAULT_LANGUAGE = "English"
 DEFAULT_COUNTRY = "US"
 
