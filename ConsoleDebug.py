@@ -4,7 +4,7 @@
 # Prints debug info to the console and allows clearing it when done. Also
 # scrolls the console window back up, when user typed command is out of view.
 # Known issues: Not designed for debugging in the middle of script output. Only
-# at the start.
+# at the beginning.
 import ctypes
 from ctypes import wintypes
 
@@ -86,11 +86,10 @@ class ConsoleDebug:
         self.kernel32.SetConsoleWindowInfo.restype = wintypes.BOOL
 
         self.handle = self.kernel32.GetStdHandle(self.STD_OUTPUT_HANDLE)
-
-        # Anchor for clear(): cursor row when the helper was created, i.e.
-        # the first row after the command that launched the program. The
-        # typed command itself sits on the row just above it.
-        self._anchor_y = self._get_info().dwCursorPosition.Y
+        # Viewport top when the helper was created. Restoring this (rather
+        # than forcing the command line to the top) keeps the window exactly
+        # where the user had it.
+        self._initial_top = self._get_info().srWindow.Top
         self._start = None
         self._end = None
 
@@ -125,6 +124,50 @@ class ConsoleDebug:
 
         return answer.strip().lower() == "y"
 
+    def restoreViewport(self):
+        # put the viewport back exactly where it was when the helper was
+        # created, so the command line stays where the user left it instead
+        # of jumping to the top
+        info = self._get_info()
+
+        if info.srWindow.Top == self._initial_top:
+            return
+
+        wnd = info.srWindow
+        new_wnd = SMALL_RECT(
+            wnd.Left,
+            self._initial_top,
+            wnd.Right,
+            self._initial_top + (wnd.Bottom - wnd.Top),
+        )
+        self.kernel32.SetConsoleWindowInfo(
+            self.handle,
+            True,
+            ctypes.byref(new_wnd),
+        )
+
+    def autoScrollThenAsk(self, prompt=""):
+        # If the last printed output scrolled out of view, print the prompt
+        # normally, then restore the original viewport so every row can be
+        # screened top-to-bottom. input() writes nothing more, so the viewport
+        # stays put until the first echo'd keystroke pulls it back down --
+        # exactly when the user starts answering. Falls back to ask() when
+        # nothing scrolled.
+        if (
+            self._start is not None
+            and self._end is not None
+            and self._start.Y < self._get_info().srWindow.Top
+        ):
+            self.print(prompt, end="")
+            self.restoreViewport()
+
+            result = input()
+            self._end = self._get_info().dwCursorPosition
+
+            return result.strip().lower() == "y"
+
+        return self.ask(prompt)
+
     def clear(self):
         if self._start is None or self._end is None:
             return
@@ -157,23 +200,9 @@ class ConsoleDebug:
             self._start,
         )
 
-        # If the debug output scrolled the typed command out of view, scroll
-        # the viewport back up just enough to show the command line again.
-        # If everything fit on screen the command is still visible, so the
-        # viewport is left alone.
-        info = self._get_info()
-        command_y = max(0, self._anchor_y - 1)
-        if command_y < info.srWindow.Top:
-            wnd = info.srWindow
-            new_top = command_y
-            new_wnd = SMALL_RECT(
-                wnd.Left, new_top, wnd.Right, new_top + (wnd.Bottom - wnd.Top)
-            )
-            self.kernel32.SetConsoleWindowInfo(
-                self.handle,
-                True,
-                ctypes.byref(new_wnd),
-            )
+        # Put the viewport back where it was before the debug output scrolled
+        # it away, so the command line stays where the user left it.
+        self.restoreViewport()
 
         self._start = None
         self._end = None

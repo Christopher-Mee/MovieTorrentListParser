@@ -377,8 +377,9 @@ def ptnFilterDebug(parsedMovies, debugOut):
     )
     debugOut.print(f"{debugTitle}\n\n" + debugStr)
 
-    # prompt user to continue or exit
-    if debugOut.ask(f"\n{debugPrompt} "):
+    # prompt user to continue or exit. Long dfs cause the console to scroll
+    # down. Auto scroll back up, so df rows can be screened from top to bottom.
+    if debugOut.autoScrollThenAsk(f"\n{debugPrompt} "):
         debugOut.clear()
     else:
         sys.exit(0)
