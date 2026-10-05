@@ -31,6 +31,7 @@ ADD_SPACE_BETWEEN_TAGS = True
 # Excess Tags
 COMBINE_RELEASE_AND_EXCESS_TAGS = True
 FORMAT_EXCESS_TAGS_IN_RELEASE = True
+PREPEND_TAGS_TO_RELEASE = True
 
 # Debugging
 MATCH_TEXT_FILE_INDEX = True
@@ -642,23 +643,29 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
 
         if parsedMovies[EXCESS_TAG_COLS[0]].notna().any():
             if COMBINE_RELEASE_AND_EXCESS_TAGS:
-                excessTags = (
-                    extractExcessMovieTag(
-                        parsedMovies, formatted=FORMAT_EXCESS_TAGS_IN_RELEASE
-                    )
-                    .astype("string")
-                    .str.upper()
-                )
+                excessTags = extractExcessMovieTag(
+                    parsedMovies, formatted=FORMAT_EXCESS_TAGS_IN_RELEASE
+                ).astype("string")
+
+                if UPPERCASE_TAGS:
+                    excessTags = excessTags.str.upper()
 
                 hasExcessTags = excessTags.ne("")
                 hasEmptyRelease = parsedMovies["release"].isna()
+                hasExistingRelease = hasExcessTags & ~hasEmptyRelease
 
                 parsedMovies.loc[hasExcessTags & hasEmptyRelease, "release"] = (
                     excessTags
                 )
-                parsedMovies.loc[hasExcessTags & ~hasEmptyRelease, "release"] += (
-                    " " + excessTags
-                )
+
+                if PREPEND_TAGS_TO_RELEASE:
+                    parsedMovies.loc[hasExistingRelease, "release"] = (
+                        excessTags[hasExistingRelease]
+                        + " "
+                        + parsedMovies.loc[hasExistingRelease, "release"]
+                    )
+                else:
+                    parsedMovies.loc[hasExistingRelease, "release"] += " " + excessTags
             else:
                 tags += extractExcessMovieTag(parsedMovies)
 
