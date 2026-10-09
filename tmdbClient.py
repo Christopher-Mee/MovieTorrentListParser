@@ -173,8 +173,8 @@ def getAdditionalMovieInfo(internalID, appendedToCallList):
 # 'None' for all fields, if NO search results are found, or the 'IMDB' ID is unknown.
 def getMovieInfo(title, releaseYear, defaultLangCode):
     rawTitle = originalTitle = originCountry = alternativeTitles = langCode = imdbId = (
-        None
-    )
+        isForeignMovie
+    ) = None
     Done = forceYearFallback = False
     while not Done:
         movieSearchResults = searchMovie(
@@ -225,6 +225,7 @@ def getMovieInfo(title, releaseYear, defaultLangCode):
         "altTitles": alternativeTitles,
         "langCode": langCode,
         "imdbId": imdbId,
+        "isForeignMovie": isForeignMovie,
     }
 
 

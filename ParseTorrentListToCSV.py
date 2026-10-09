@@ -201,24 +201,24 @@ def getLocalTransliteratedTitle(
 ):
     if not (rawTitle := apiResult.get("rawTitle")):
         return None
-    isForeignTitle = (
+
+    isOnlyOneTitle = 1 == len(titleVariants)
+    isForeignMovie = apiResult.get("isForeignMovie")
+    isTitleDifferentFromRawTitle = (
         SequenceMatcher(
             None, titleVariant.lower().strip(), rawTitle.lower().strip()
         ).ratio()
         < threshold
     )
-    isOneTitleOnly = 1 == len(titleVariants)
-    isForeignMovie = apiResult.get("altTitles") or apiResult.get("originalTitle")
-    isTransliteratedTitleOnly = isOneTitleOnly and isForeignTitle and isForeignMovie
-    isDefaultLangTitleOnly = isOneTitleOnly and not isForeignTitle
 
-    if isTransliteratedTitleOnly:
-        return titleVariant
+    if isOnlyOneTitle:
+        isLikelyTransliteratedTitle = isTitleDifferentFromRawTitle and isForeignMovie
+        if isLikelyTransliteratedTitle:
+            return titleVariant
 
-    if isDefaultLangTitleOnly:
-        return None
+        return None  # return None to show that no transliterated title was found.
 
-    if isForeignTitle:
+    if isTitleDifferentFromRawTitle:
         return titleVariant
 
     return next((v for v in titleVariants if v != titleVariant), None)
@@ -353,20 +353,24 @@ def ptnFilterDebug(parsedMovies, debugOut):
     if FILTER_PTN_DEBUG_OUTPUT:
         # Filter out known bad values. The displayed output will still have
         # known good values, so be careful when screening for bad values.
-        dfDebug["episodeName"] = extractMovieTags(
-            parsedMovies,
-            "episodeName",
-            useColNameAsTag=False,
-            formatTags=False,
-        )
+        if parsedMovies["episodeName"].notna().any():
+            dfDebug["episodeName"] = extractMovieTags(
+                parsedMovies,
+                "episodeName",
+                useColNameAsTag=False,
+                formatTags=False,
+            )
 
         # Filter out whitelisted Excess tags here
         # Display str as single str and multi-str as list
-        dfDebug["excess"] = extractExcessMovieTag(
-            parsedMovies, formatted=False, returnLists=True, invert=True
-        ).map(
-            lambda tags: tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
-        )
+        if parsedMovies["excess"].notna().any():
+            dfDebug["excess"] = extractExcessMovieTags(
+                parsedMovies, formatted=False, returnLists=True, invert=True
+            ).map(
+                lambda tags: (
+                    tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
+                )
+            )
 
     if UPPERCASE_CSV_HEADERS:
         dfDebug.columns = dfDebug.columns.str.upper()
@@ -415,7 +419,7 @@ def extractMovieTags(parsedMovies, col, useColNameAsTag=True, formatTags=True):
     return np.where(conditional, tagStr, "")
 
 
-def extractExcessMovieTag(
+def extractExcessMovieTags(
     parsedMovies, formatted=True, returnLists=False, invert=False
 ):
     # convert dictionary into lookup table
@@ -643,7 +647,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
 
         if parsedMovies[EXCESS_TAG_COLS[0]].notna().any():
             if COMBINE_RELEASE_AND_EXCESS_TAGS:
-                excessTags = extractExcessMovieTag(
+                excessTags = extractExcessMovieTags(
                     parsedMovies, formatted=FORMAT_EXCESS_TAGS_IN_RELEASE
                 ).astype("string")
 
@@ -667,7 +671,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
                 else:
                     parsedMovies.loc[hasExistingRelease, "release"] += " " + excessTags
             else:
-                tags += extractExcessMovieTag(parsedMovies)
+                tags += extractExcessMovieTags(parsedMovies)
 
         parsedMovies = deleteColumn(
             parsedMovies, BOOL_TAG_COLS + STR_TAG_COLS + EXCESS_TAG_COLS
@@ -700,7 +704,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
 
         # filter excess col values
         if parsedMovies[EXCESS_TAG_COLS[0]].notna().any():
-            parsedMovies[EXCESS_TAG_COLS[0]] = extractExcessMovieTag(
+            parsedMovies[EXCESS_TAG_COLS[0]] = extractExcessMovieTags(
                 parsedMovies, returnLists=True
             )
 
