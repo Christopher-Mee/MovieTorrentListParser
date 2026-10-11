@@ -545,7 +545,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
     # parse file and concatenate to a df
     parsedTextFile = pd.DataFrame()
     try:
-        with open(textFile) as f:
+        with open(textFile, encoding="utf-8") as f:
             for line in f:
                 df_dictionary = pd.DataFrame([PTN.parse(line)])
                 parsedTextFile = pd.concat(
