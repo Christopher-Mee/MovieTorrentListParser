@@ -2,6 +2,7 @@
 # 2023-08-16
 # Parse and convert a list of p2p movie file names into CSV format
 import re  # Regex
+import string  # String formatting
 import sys  # System
 from difflib import SequenceMatcher  # Str compare/search tool
 from enum import Enum, auto  # Ternary return solution
@@ -342,55 +343,145 @@ def dfToStringLJust(df, naRep="NaN", index=True):
 
 
 def ptnFilterDebug(parsedMovies, debugOut):
-    dfDebug = parsedMovies[["year", "title", "episodeName", "excess"]]
     debugOut = ConsoleDebug()
-    debugTitle = "Tag Filter Screening:"
-    debugPrompt = "Clear debug output and continue? [Y/N]:"
 
-    if MATCH_TEXT_FILE_INDEX:
-        dfDebug.index = dfDebug.index + 1
+    while True:
+        dfDebug = parsedMovies[["year", "title", "episodeName", "excess"]]
+        debugTitle = "Tag Filter Screening:"
+        debugPrompt = "Clear debug output and continue? Or edit row? [Y/N/E]:"
 
-    if FILTER_PTN_DEBUG_OUTPUT:
-        # Filter out known bad values. The displayed output will still have
-        # known good values, so be careful when screening for bad values.
-        if parsedMovies["episodeName"].notna().any():
-            dfDebug["episodeName"] = extractMovieTags(
-                parsedMovies,
-                "episodeName",
-                useColNameAsTag=False,
-                formatTags=False,
-            )
+        if MATCH_TEXT_FILE_INDEX:
+            dfDebug.index = dfDebug.index + 1
 
-        # Filter out whitelisted Excess tags here
-        # Display str as single str and multi-str as list
-        if parsedMovies["excess"].notna().any():
-            dfDebug["excess"] = extractExcessMovieTags(
-                parsedMovies, formatted=False, returnLists=True, invert=True
-            ).map(
-                lambda tags: (
-                    tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
+        if FILTER_PTN_DEBUG_OUTPUT:
+            # Filter out known bad values. The displayed output will still have
+            # known good values, so be careful when screening for bad values.
+            if parsedMovies["episodeName"].notna().any():
+                dfDebug["episodeName"] = extractMovieTags(
+                    parsedMovies,
+                    "episodeName",
+                    useColNameAsTag=False,
+                    formatTags=False,
                 )
-            )
 
-    if UPPERCASE_CSV_HEADERS:
-        dfDebug.columns = dfDebug.columns.str.upper()
-        debugTitle = debugTitle.upper()
-        debugPrompt = debugPrompt.upper()
+            # Filter out whitelisted Excess tags here
+            # Display str as single str and multi-str as list
+            if parsedMovies["excess"].notna().any():
+                dfDebug["excess"] = extractExcessMovieTags(
+                    parsedMovies, formatted=False, returnLists=True, invert=True
+                ).map(
+                    lambda tags: (
+                        tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
+                    )
+                )
 
-    # print debugging info to help build PTN filtering rules
-    debugStr = (
-        dfToStringLJust(dfDebug, naRep=NA_REPLACEMENT_DEBUG_OUTPUT)
-        if LEFT_JUSTIFY_DEBUG_OUTPUT
-        else dfDebug.to_string(na_rep=NA_REPLACEMENT_DEBUG_OUTPUT)
-    )
-    debugOut.print(f"{debugTitle}\n\n" + debugStr)
+        if UPPERCASE_CSV_HEADERS:
+            dfDebug.columns = dfDebug.columns.str.upper()
+            debugTitle = debugTitle.upper()
+            debugPrompt = debugPrompt.upper()
 
-    # prompt user to continue or exit. Long dfs cause the console to scroll
-    # down. Auto scroll back up, so df rows can be screened from top to bottom.
-    if debugOut.autoScrollThenAsk(f"\n{debugPrompt} "):
+        # print debugging info to help build PTN filtering rules
+        debugStr = (
+            dfToStringLJust(dfDebug, naRep=NA_REPLACEMENT_DEBUG_OUTPUT)
+            if LEFT_JUSTIFY_DEBUG_OUTPUT
+            else dfDebug.to_string(na_rep=NA_REPLACEMENT_DEBUG_OUTPUT)
+        )
+        debugOut.print(f"{debugTitle}\n\n" + debugStr)
+
+        # prompt user to continue, exit, or edit an incorrectly parsed row. Long
+        # dfs cause the console to scroll down. Auto scroll back up, so df rows
+        # can be screened from top to bottom.
+        choice = debugOut.autoScrollThenChoose(f"\n{debugPrompt} ")
+        while choice not in ("y", "n", "e"):
+            choice = debugOut.reAskSameLine(f"\n{debugPrompt} ")
+
+        if choice == "y":
+            debugOut.clear()
+            return
+        if choice == "n":
+            sys.exit(0)
+        # choice == "e":
+        promptRowCorrection(parsedMovies, debugOut)
+        debugOut.waitForAnyKey()
         debugOut.clear()
-    else:
-        sys.exit(0)
+
+
+def formatPrompt(template, **values):
+    """Format a user prompt, uppercasing the template's static text but not
+    the interpolated values when UPPERCASE_CSV_HEADERS is set."""
+    if UPPERCASE_CSV_HEADERS:
+        parts = []
+        for literal, field, spec, conversion in string.Formatter().parse(template):
+            parts.append(literal.upper())
+            if field is not None:
+                parts.append("{" + field)
+                if conversion:
+                    parts.append("!" + conversion)
+                if spec:
+                    parts.append(":" + spec)
+                parts.append("}")
+        template = "".join(parts)
+    return template.format(**values)
+
+
+def promptRowCorrection(parsedMovies, debugOut):
+    firstRow = 1 if MATCH_TEXT_FILE_INDEX else 0
+    lastRow = firstRow + len(parsedMovies) - 1
+    rowPrompt = formatPrompt(
+        "Row number ({firstRow}-{lastRow}, blank to cancel): ",
+        firstRow=firstRow,
+        lastRow=lastRow,
+    )
+
+    # row index input
+    print()
+    rowIndexStr = input(rowPrompt).strip()
+    while rowIndexStr and not (
+        rowIndexStr.isdigit() and firstRow <= int(rowIndexStr) <= lastRow
+    ):
+        rowIndexStr = debugOut.reAskSameLine(rowPrompt)
+    if not rowIndexStr:
+        return
+
+    dfIndex = parsedMovies.index[int(rowIndexStr) - firstRow]
+    oldTitle = parsedMovies.loc[dfIndex, "title"]
+    oldYear = parsedMovies.loc[dfIndex, "year"]
+
+    # row new title input
+    newTitle = input(
+        formatPrompt('New title (blank to keep "{oldTitle}"): ', oldTitle=oldTitle)
+    ).strip()
+
+    # row new year input
+    yearPrompt = formatPrompt("New year (blank to keep {oldYear}): ", oldYear=oldYear)
+    newYearStr = input(yearPrompt).strip()
+    while newYearStr:
+        try:
+            parsedMovies.loc[dfIndex, "year"] = int(newYearStr)
+            break
+        except ValueError:
+            newYearStr = debugOut.reAskSameLine(yearPrompt)
+
+    if newTitle:
+        parsedMovies.loc[dfIndex, "title"] = newTitle
+
+    print(
+        "\n"
+        + formatPrompt(
+            "Row {rowIndexStr} Old - Title, Year: {title}, {year}",
+            rowIndexStr=rowIndexStr,
+            title=oldTitle,
+            year=oldYear,
+        )
+        + "\n"
+        + formatPrompt(
+            "Row {rowIndexStr} New - Title, Year: {title}, {year}",
+            rowIndexStr=rowIndexStr,
+            title=parsedMovies.loc[dfIndex, "title"],
+            year=parsedMovies.loc[dfIndex, "year"],
+        )
+        + "\n"
+    )
 
 
 def deleteColumn(df, cols):

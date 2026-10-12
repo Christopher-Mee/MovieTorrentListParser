@@ -6,6 +6,7 @@
 # Known issues: Not designed for debugging in the middle of script output. Only
 # at the beginning.
 import ctypes
+import msvcrt
 from ctypes import wintypes
 
 
@@ -146,13 +147,14 @@ class ConsoleDebug:
             ctypes.byref(new_wnd),
         )
 
-    def autoScrollThenAsk(self, prompt=""):
-        # If the last printed output scrolled out of view, print the prompt
+    def _readAnswer(self, prompt=""):
+        # Shared reader behind autoScrollThenAsk/autoScrollThenChoose: if
+        # the last printed output scrolled out of view, print the prompt
         # normally, then restore the original viewport so every row can be
         # screened top-to-bottom. input() writes nothing more, so the viewport
         # stays put until the first echo'd keystroke pulls it back down --
-        # exactly when the user starts answering. Falls back to ask() when
-        # nothing scrolled.
+        # exactly when the user starts answering. Falls back to ask()-style
+        # prompting when nothing scrolled.
         if (
             self._start is not None
             and self._end is not None
@@ -162,11 +164,72 @@ class ConsoleDebug:
             self.restoreViewport()
 
             result = input()
-            self._end = self._get_info().dwCursorPosition
+        else:
+            if self._start is None:
+                self._start = self._get_info().dwCursorPosition
 
-            return result.strip().lower() == "y"
+            result = input(prompt)
 
-        return self.ask(prompt)
+        # input() echoes the typed text and leaves the cursor on the line
+        # below after Enter. Track it so clear() wipes the prompt line and
+        # that extra line instead of leaving a hanging row behind.
+        self._end = self._get_info().dwCursorPosition
+
+        return result.strip().lower()
+
+    def autoScrollThenAsk(self, prompt=""):
+        return self._readAnswer(prompt) == "y"
+
+    def autoScrollThenChoose(self, prompt=""):
+        # Like autoScrollThenAsk, but returns the raw choice string so
+        # callers can offer more than Y/N.
+        return self._readAnswer(prompt)
+
+
+    def waitForAnyKey(self, prompt="Press any key to continue . . ."):
+        """Wait for any keypress (like the Windows pause command), extending
+        the tracked region so a following clear() wipes everything up to
+        and including this line."""
+        print(prompt, end="", flush=True)
+        msvcrt.getwch()
+        print()
+        self._end = self._get_info().dwCursorPosition
+
+    def reAskSameLine(self, prompt):
+        """Re-display `prompt` on its original line after bad input and read
+        again. Expects the cursor to be on the line just below the prompt
+        (where a bare input() left it) and the prompt to have started at
+        column 0 of its line."""
+        info = self._get_info()
+        line_y = info.dwCursorPosition.Y - 1
+        line_start = COORD(0, line_y)
+
+        # back to the prompt line and wipe it
+        self.kernel32.SetConsoleCursorPosition(self.handle, line_start)
+        written = wintypes.DWORD()
+        self.kernel32.FillConsoleOutputCharacterW(
+            self.handle,
+            " ",
+            info.dwSize.X,
+            line_start,
+            ctypes.byref(written),
+        )
+        self.kernel32.FillConsoleOutputAttribute(
+            self.handle,
+            info.wAttributes,
+            info.dwSize.X,
+            line_start,
+            ctypes.byref(written),
+        )
+
+        # reprint the prompt (without leading newlines) and read fresh
+        print(prompt.lstrip("\r\n"), end="", flush=True)
+        result = input()
+        self._end = self._get_info().dwCursorPosition
+
+        return result.strip().lower()
+
+
 
     def clear(self):
         if self._start is None or self._end is None:
