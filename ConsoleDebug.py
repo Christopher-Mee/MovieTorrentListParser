@@ -185,7 +185,6 @@ class ConsoleDebug:
         # callers can offer more than Y/N.
         return self._readAnswer(prompt)
 
-
     def waitForAnyKey(self, prompt="Press any key to continue . . ."):
         """Wait for any keypress (like the Windows pause command), extending
         the tracked region so a following clear() wipes everything up to
@@ -228,8 +227,6 @@ class ConsoleDebug:
         self._end = self._get_info().dwCursorPosition
 
         return result.strip().lower()
-
-
 
     def clear(self):
         if self._start is None or self._end is None:
