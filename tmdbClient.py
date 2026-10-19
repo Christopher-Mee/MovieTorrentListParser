@@ -81,7 +81,7 @@ def handleApiErrors(callType, response):
 # API call to search for a movie, using title and release year.
 # https://developer.themoviedb.org/reference/search-movie
 @rateLimited(rateLimiter)
-def searchMovie(title, releaseYear, forceYearFallback=False):
+def searchMovie(title, releaseYear, forceYearFallback=False, invertFallback=False):
     url = f"{BASE_URL}/search/movie"
     params = {
         "query": title,
@@ -89,6 +89,9 @@ def searchMovie(title, releaseYear, forceYearFallback=False):
         "language": "en-US",
         "page": 1,
     }
+
+    if invertFallback:
+        forceYearFallback = not forceYearFallback
 
     if not forceYearFallback:
         params["primary_release_year"] = releaseYear
@@ -171,14 +174,17 @@ def getAdditionalMovieInfo(internalID, appendedToCallList):
 # 1) Movie title w/ special characters included
 # 2) 'IMDB' ID
 # 'None' for all fields, if NO search results are found, or the 'IMDB' ID is unknown.
-def getMovieInfo(title, releaseYear, defaultLangCode):
+def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
     rawTitle = originalTitle = originCountry = alternativeTitles = langCode = imdbId = (
         isForeignMovie
     ) = None
     Done = forceYearFallback = False
     while not Done:
         movieSearchResults = searchMovie(
-            title, releaseYear, forceYearFallback=forceYearFallback
+            title,
+            releaseYear,
+            forceYearFallback=forceYearFallback,
+            invertFallback=invertFallback,
         )
 
         firstResult = next(

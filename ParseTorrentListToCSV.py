@@ -1,9 +1,12 @@
 # Christopher Mee
 # 2023-08-16
 # Parse and convert a list of p2p movie file names into CSV format
+import os  # System utilities
 import re  # Regex
 import string  # String formatting
+import subprocess  # Re-run and debug torrent names
 import sys  # System
+import tempfile  # Temp files for subprocess IPC
 from difflib import SequenceMatcher  # Str compare/search tool
 from enum import Enum, auto  # Ternary return solution
 from pathlib import Path  # File path handling
@@ -225,11 +228,16 @@ def getLocalTransliteratedTitle(
     return next((v for v in titleVariants if v != titleVariant), None)
 
 
-def getMovieInfo(title, releaseYear, defaultLangCode):
+def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
     movieTitleVariants = splitEnglishForeignTitle(title)
     try:
         for titleVariant in movieTitleVariants:
-            apiResult = tmdb.getMovieInfo(titleVariant, releaseYear, defaultLangCode)
+            apiResult = tmdb.getMovieInfo(
+                titleVariant,
+                releaseYear,
+                defaultLangCode,
+                invertFallback=invertFallback,
+            )
 
             imdbId = apiResult.get("imdbId")
             if imdbId:
@@ -296,7 +304,7 @@ def getMovieInfoWrapper(title, releaseYear, defaultLangCode):
     if processedMovies == 0:
         printProgress(0)
 
-    movieInfo = getMovieInfo(title, releaseYear, defaultLangCode)
+    movieInfo = getMovieInfo(title, releaseYear, defaultLangCode, INVERT_YEAR_FALLBACK)
 
     if not movieInfo.get("IMDB"):
         incompleteMovieCount += 1
@@ -325,6 +333,14 @@ def printError(*errorMsg):
     sys.exit(1)
 
 
+def getTorrentNameFromFile(textFilePath, fileLineNumber):
+    with open(textFilePath, encoding="utf-8") as f:
+        for currentLineNumber, line in enumerate(f, start=1):
+            if currentLineNumber == fileLineNumber:
+                return line.rstrip("\r\n")
+    return None
+
+
 def dfToStringLJust(df, naRep="NaN", index=True):
     dfFilled = df.fillna(naRep)
     widths = {
@@ -342,55 +358,47 @@ def dfToStringLJust(df, naRep="NaN", index=True):
     return dfFilled.to_string(justify="left", formatters=formatters, index=index)
 
 
-def ptnFilterDebug(parsedMovies, debugOut):
+def dfToString(df):
+    return (
+        dfToStringLJust(df, naRep=NA_REPLACEMENT_DEBUG_OUTPUT)
+        if LEFT_JUSTIFY_DEBUG_OUTPUT
+        else df.to_string(na_rep=NA_REPLACEMENT_DEBUG_OUTPUT)
+    )
+
+
+def screenDebugTable(
+    parsedMovies,
+    debugTitle,
+    buildDfDebug=None,
+    debugPrompt="Clear debug output and continue? Or edit row? [Y/N/E]:",
+    onEditSelection=None,
+):
+    if onEditSelection is None:
+        onEditSelection = promptRowCorrection
+
     debugOut = ConsoleDebug()
 
-    while True:
-        dfDebug = parsedMovies[["year", "title", "episodeName", "excess"]]
-        debugTitle = "Tag Filter Screening:"
-        debugPrompt = "Clear debug output and continue? Or edit row? [Y/N/E]:"
+    if UPPERCASE_CSV_HEADERS:
+        debugTitle = debugTitle.upper()
+        debugPrompt = debugPrompt.upper()
+
+    def printTable():
+        dfDebug = buildDfDebug(parsedMovies) if buildDfDebug else parsedMovies.copy()
 
         if MATCH_TEXT_FILE_INDEX:
             dfDebug.index = dfDebug.index + 1
 
-        if FILTER_PTN_DEBUG_OUTPUT:
-            # Filter out known bad values. The displayed output will still have
-            # known good values, so be careful when screening for bad values.
-            if parsedMovies["episodeName"].notna().any():
-                dfDebug["episodeName"] = extractMovieTags(
-                    parsedMovies,
-                    "episodeName",
-                    useColNameAsTag=False,
-                    formatTags=False,
-                )
-
-            # Filter out whitelisted Excess tags here
-            # Display str as single str and multi-str as list
-            if parsedMovies["excess"].notna().any():
-                dfDebug["excess"] = extractExcessMovieTags(
-                    parsedMovies, formatted=False, returnLists=True, invert=True
-                ).map(
-                    lambda tags: (
-                        tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
-                    )
-                )
-
         if UPPERCASE_CSV_HEADERS:
             dfDebug.columns = dfDebug.columns.str.upper()
-            debugTitle = debugTitle.upper()
-            debugPrompt = debugPrompt.upper()
 
-        # print debugging info to help build PTN filtering rules
-        debugStr = (
-            dfToStringLJust(dfDebug, naRep=NA_REPLACEMENT_DEBUG_OUTPUT)
-            if LEFT_JUSTIFY_DEBUG_OUTPUT
-            else dfDebug.to_string(na_rep=NA_REPLACEMENT_DEBUG_OUTPUT)
-        )
-        debugOut.print(f"{debugTitle}\n\n" + debugStr)
+        debugOut.print(f"{debugTitle}\n\n" + dfToString(dfDebug))
 
-        # prompt user to continue, exit, or edit an incorrectly parsed row. Long
-        # dfs cause the console to scroll down. Auto scroll back up, so df rows
-        # can be screened from top to bottom.
+    while True:
+        printTable()
+
+        # prompt user to continue, exit, or edit a row. Long dfs cause the
+        # console to scroll down. Auto scroll back up, so df rows can be
+        # screened from top to bottom.
         choice = debugOut.autoScrollThenChoose(f"\n{debugPrompt} ")
         while choice not in ("y", "n", "e"):
             choice = debugOut.reAskSameLine(f"\n{debugPrompt} ")
@@ -401,14 +409,61 @@ def ptnFilterDebug(parsedMovies, debugOut):
         if choice == "n":
             sys.exit(0)
         # choice == "e":
-        promptRowCorrection(parsedMovies, debugOut)
+        if SKIP_WAIT == onEditSelection(parsedMovies, debugOut, printTable):
+            debugOut.clear()
+            continue
         debugOut.waitForAnyKey()
         debugOut.clear()
 
 
+def buildPtnFilterDfDebug(parsedMovies):
+    dfDebug = parsedMovies[["year", "title", "episodeName", "excess"]]
+
+    if FILTER_PTN_DEBUG_OUTPUT:
+        # Filter out known bad values. The displayed output will still have
+        # known good values, so be careful when screening for bad values.
+        if parsedMovies["episodeName"].notna().any():
+            dfDebug["episodeName"] = extractMovieTags(
+                parsedMovies,
+                "episodeName",
+                useColNameAsTag=False,
+                formatTags=False,
+            )
+
+        # Filter out whitelisted Excess tags here
+        # Display str as single str and multi-str as list
+        if parsedMovies["excess"].notna().any():
+            dfDebug["excess"] = extractExcessMovieTags(
+                parsedMovies, formatted=False, returnLists=True, invert=True
+            ).map(
+                lambda tags: (
+                    tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
+                )
+            )
+
+    return dfDebug
+
+
+def ptnFilterDebug(parsedMovies):
+    screenDebugTable(
+        parsedMovies,
+        debugTitle="Tag Filter Screening:",
+        buildDfDebug=buildPtnFilterDfDebug,
+    )
+
+
+def finalOutputDebug(parsedMovies):
+    screenDebugTable(
+        parsedMovies,
+        debugTitle="\n" + "Final Output Screening:",
+        onEditSelection=promptOptionsMenu,
+        debugPrompt="Clear debug output and finish? Or edit row? [Y/N/E]:",
+    )
+
+
 def formatPrompt(template, **values):
-    """Format a user prompt, uppercasing the template's static text but not
-    the interpolated values when UPPERCASE_CSV_HEADERS is set."""
+    # Format a user prompt, uppercasing the template's static text but not the
+    # interpolated values when UPPERCASE_CSV_HEADERS is set.
     if UPPERCASE_CSV_HEADERS:
         parts = []
         for literal, field, spec, conversion in string.Formatter().parse(template):
@@ -424,7 +479,30 @@ def formatPrompt(template, **values):
     return template.format(**values)
 
 
-def promptRowCorrection(parsedMovies, debugOut):
+def promptYesNo(promptText, debugOut, blankMeansNo=False):
+    prompt = formatPrompt(promptText)
+    answer = input(prompt).strip().lower()
+    if blankMeansNo and answer == "":
+        return False
+    while answer not in ("y", "n"):
+        answer = debugOut.reAskSameLine(prompt)
+        if blankMeansNo and answer == "":
+            return False
+    return answer == "y"
+
+
+def promptNumberInRange(prompt, debugOut, firstOption, lastOption):
+    # return the entered number string, or "" when blank
+    selectionStr = input(prompt).strip()
+    while selectionStr and not (
+        selectionStr.isdigit() and firstOption <= int(selectionStr) <= lastOption
+    ):
+        selectionStr = debugOut.reAskSameLine(prompt)
+    return selectionStr
+
+
+def promptRowSelection(parsedMovies, debugOut):
+    # return (rowIndexStr, firstRow), or None on cancel
     firstRow = 1 if MATCH_TEXT_FILE_INDEX else 0
     lastRow = firstRow + len(parsedMovies) - 1
     rowPrompt = formatPrompt(
@@ -435,17 +513,24 @@ def promptRowCorrection(parsedMovies, debugOut):
 
     # row index input
     print()
-    rowIndexStr = input(rowPrompt).strip()
-    while rowIndexStr and not (
-        rowIndexStr.isdigit() and firstRow <= int(rowIndexStr) <= lastRow
-    ):
-        rowIndexStr = debugOut.reAskSameLine(rowPrompt)
-    if not rowIndexStr:
-        return
+    rowIndexStr = promptNumberInRange(rowPrompt, debugOut, firstRow, lastRow)
 
-    dfIndex = parsedMovies.index[int(rowIndexStr) - firstRow]
-    oldTitle = parsedMovies.loc[dfIndex, "title"]
-    oldYear = parsedMovies.loc[dfIndex, "year"]
+    if not rowIndexStr:
+        return None
+    return int(rowIndexStr), firstRow
+
+
+def promptRowCorrection(parsedMovies, debugOut, refreshTable=None):
+    result = promptRowSelection(parsedMovies, debugOut)
+    if result is None:
+        return
+    rowIndexStr, firstRow = result
+
+    dfIndex = parsedMovies.index[rowIndexStr - firstRow]
+    titleCol = next(col for col in parsedMovies.columns if col.lower() == "title")
+    yearCol = next(col for col in parsedMovies.columns if col.lower() == "year")
+    oldTitle = parsedMovies.loc[dfIndex, titleCol]
+    oldYear = parsedMovies.loc[dfIndex, yearCol]
 
     # row new title input
     newTitle = input(
@@ -457,13 +542,13 @@ def promptRowCorrection(parsedMovies, debugOut):
     newYearStr = input(yearPrompt).strip()
     while newYearStr:
         try:
-            parsedMovies.loc[dfIndex, "year"] = int(newYearStr)
+            parsedMovies.loc[dfIndex, yearCol] = int(newYearStr)
             break
         except ValueError:
             newYearStr = debugOut.reAskSameLine(yearPrompt)
 
     if newTitle:
-        parsedMovies.loc[dfIndex, "title"] = newTitle
+        parsedMovies.loc[dfIndex, titleCol] = newTitle
 
     print(
         "\n"
@@ -477,11 +562,178 @@ def promptRowCorrection(parsedMovies, debugOut):
         + formatPrompt(
             "Row {rowIndexStr} New - Title, Year: {title}, {year}",
             rowIndexStr=rowIndexStr,
-            title=parsedMovies.loc[dfIndex, "title"],
-            year=parsedMovies.loc[dfIndex, "year"],
+            title=parsedMovies.loc[dfIndex, titleCol],
+            year=parsedMovies.loc[dfIndex, yearCol],
         )
         + "\n"
     )
+
+
+def promptOptionsMenu(parsedMovies, callerDebugOut, refreshTable=None):
+    debugOut = ConsoleDebug()
+    # print final output and allow the following:
+    # Select row to edit, then
+    # 1. rerun with year fallback.
+    #     add inverse fallback to getMovieInfo
+    # 2. change title
+    # 3. open single IMDB link in browser
+    #     lets user get official title that is different from api result
+    # 4. open all IMDB links in browser
+    #     lets user check if all IMDB links are correct
+    optionsTitle = "Debug Options:"
+    optionsList = [
+        "1) Edit movie title",
+        "2) Re-run TMDb search using year fallback",
+    ]
+    optionsMenu = "\n" + optionsTitle + "\n" + "\n".join(optionsList) + "\n"
+    optionsPrompt = "Select option ({firstOption}-{lastOption}, blank to exit): "
+    firstOption, lastOption = 1, len(optionsList)
+
+    # format options prompts
+    formattedMenu = formatPrompt(optionsMenu)
+    formattedPrompt = formatPrompt(
+        optionsPrompt, firstOption=firstOption, lastOption=lastOption
+    )
+
+    while True:
+        # print options menu
+        debugOut.print(formattedMenu)
+
+        # options menu input
+        selectionStr = promptNumberInRange(
+            formattedPrompt, debugOut, firstOption, lastOption
+        )
+        if not selectionStr:
+            debugOut.clear()
+            return SKIP_WAIT
+
+        # process selection
+        selection = int(selectionStr)
+        match selection:
+            case 1:
+                raise NotImplemented
+            case 2:
+                rerunMovieSearchWithYearFallback(parsedMovies, debugOut)
+            case 3:
+                raise NotImplemented
+            case 4:
+                raise NotImplemented
+
+        debugOut.waitForAnyKey()
+        debugOut.clear()
+        if refreshTable is not None:
+            callerDebugOut.clear()
+            refreshTable()
+
+
+def rerunMovieSearchWithYearFallback(parsedMovies, debugOut):
+    global DEBUG_ON_RERUN
+
+    # prompts and titles
+    debugOnRerunPrompt = (
+        "Enable debugging for the re-run search? (Y/N, blank to skip): "
+    )
+    rerunPromptTitle = "\nRe-running line {lineIndex} with search-year fallback:"
+
+    # keep changes msg's
+    rerunDiscardedResult = "\nNo changes were made!"
+    rerunAcceptedResult = "\nUpdated row {lineIndex} successfully!"
+
+    # error msg's
+    fileReadError = (
+        "\nCould not read line {lineIndex} from input file. No changes were made."
+    )
+    rerunFailedToLaunch = "\nFailed to launch re-run debug session: {e}"
+    rerunNoResult = "\nRe-run did not produce a result. No changes were made."
+    rerunInvalidResult = "\nRe-run produced an invalid result. No changes were made."
+
+    # row selection
+    if not (result := promptRowSelection(parsedMovies, debugOut)):
+        return
+    rowIndexStr, firstRow = result
+
+    # debug selection
+    debugSelection = DEBUG_ON_RERUN = promptYesNo(
+        debugOnRerunPrompt, debugOut, blankMeansNo=True
+    )
+    debugArgument = "true" if debugSelection else "false"
+
+    # get original torrent name
+    lineIndex = int(rowIndexStr) if MATCH_TEXT_FILE_INDEX else int(rowIndexStr) + 1
+    torrentName = getTorrentNameFromFile(RERUN_TEXT_FILE, lineIndex)
+    if not torrentName:
+        print(formatPrompt(fileReadError, lineIndex=lineIndex))
+        return
+
+    # save old row
+    oldDfIndex = parsedMovies.index[int(rowIndexStr) - firstRow]
+    oldRowData = parsedMovies.loc[oldDfIndex]
+
+    # create temp file used to send and receive data from the subprocess.
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False, encoding="utf-8"
+    ) as tmpFile:
+        tmpFile.write(torrentName if torrentName.endswith("\n") else torrentName + "\n")
+        tmpPath = tmpFile.name
+
+    # run re-run subprocess
+    scriptPath = str(Path(sys.argv[FILE_PATH]).resolve())
+    print(formatPrompt(rerunPromptTitle, lineIndex=lineIndex))
+    try:
+        # set subprocess arguments
+        append = "false"  # required to import csv
+        linkStyle = sys.argv[HYPERLINK_STYLE]
+        debugOnRerun = debugArgument
+        subprocess.Popen(
+            [sys.executable, scriptPath, "--rerun", tmpPath, tmpPath]
+            + [append, linkStyle, debugOnRerun],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        ).wait()
+    except Exception as e:
+        print(formatPrompt(rerunFailedToLaunch, e=e))
+        try:
+            os.unlink(tmpPath)
+        except OSError:
+            pass
+        return
+
+    # read the subprocess output
+    try:
+        newRow = pd.read_csv(tmpPath, encoding="utf-8")
+    except (IOError, pd.errors.EmptyDataError):
+        print(formatPrompt(rerunNoResult))
+        return
+    finally:
+        try:
+            os.unlink(tmpPath)
+        except OSError:
+            pass
+
+    if newRow.empty:
+        print(formatPrompt(rerunNoResult))
+        return
+    if newRow.shape[1] != len(parsedMovies.columns):
+        print(formatPrompt(rerunInvalidResult))
+        return
+    newRowData = newRow.iloc[0]
+
+    # display old vs new
+    dfCompare = pd.DataFrame(
+        [oldRowData.values, newRowData.values],
+        index=["OLD", "NEW"],
+        columns=newRow.columns,
+    )
+    print(dfToString(dfCompare))
+
+    # confirm before applying
+    if not promptYesNo("\nApply these changes? [Y/N]: ", debugOut):
+        print(formatPrompt(rerunDiscardedResult))
+        return
+
+    # apply new row data, overwriting old data
+    parsedMovies.loc[oldDfIndex] = newRowData.values
+
+    print(formatPrompt(rerunAcceptedResult, lineIndex=lineIndex))
 
 
 def deleteColumn(df, cols):
@@ -577,6 +829,7 @@ def extractExcessMovieTags(
 MINIMUM_ARGUMENT_COUNT = 2  # script name + text file input
 
 # Arguments indexes
+FILE_PATH = 0
 TEXT_FILE_ARGUMENT = 1
 APPENDING = 2
 HYPERLINK_STYLE = 3
@@ -599,7 +852,7 @@ ARGUMENT_DESCRIPTORS = {
 }
 
 # Script Manual
-SCRIPT_NAME = Path(sys.argv[0]).name
+SCRIPT_NAME = Path(sys.argv[FILE_PATH]).name
 USAGE = (
     "\n"
     + f"USAGE: {SCRIPT_NAME} "
@@ -611,7 +864,7 @@ USAGE = (
 
 # Valid Output
 PROGRESS_STR = "% COMPLETED"
-VALID_ARGUMENT = "SUCCESS: CSV results copied to your clipboard."
+VALID_OUTPUT = "SUCCESS: CSV results copied to your clipboard."
 INCOMPLETE_DATA_WARNING = (
     "WARNING: {incompleteMovieCount} parsed movie{plural} couldn't be found "
     "online and failed to parse completely. See INCOMPLETE_MOVIES.txt."
@@ -622,12 +875,49 @@ INVALID_ARGUMENT = "INVALID ARGUMENT: "
 FILE_NOT_FOUND = "No such file - "
 INVALID_FILENAME = "Failed to parse filename. Expected a '.txt' file."
 
+# Re-run debug mode
+MINIMUM_RERUN_ARGUMENT_COUNT = 4
+RERUN_ARGUMENT = 1
+RERUN_ARGUMENT_FLAG = "--rerun"
+RERUN_INPUT_FILE = 2
+RERUN_OUTPUT_FILE = 3
+
+RERUN_OUTPUT_PATH = None
+RERUN_TEXT_FILE = None
+INVERT_YEAR_FALLBACK = False
+
+DEBUG_TITLE = "Re-run debug mode launched with search-year fallback enabled:"
+VALID_DEBUG_OUTPUT = "SUCCESS: Re-run debug mode results sent to the main window."
+
+DEBUG_ON_RERUN = False
+SKIP_WAIT = True # not a setting, constant value only
+
 # Foreign movies
 DEFAULT_LANGUAGE_CODE = langNameToCode(DEFAULT_LANGUAGE)
 
 movieCount = 0  # number of movies parsed from file
 processedMovies = 0  # number of movies finished processing
 incompleteMovieCount = 0  # number of movies not found on TMDB
+
+# check for rerun mode
+if (
+    len(sys.argv) >= MINIMUM_RERUN_ARGUMENT_COUNT
+    and sys.argv[RERUN_ARGUMENT] == RERUN_ARGUMENT_FLAG
+):
+    rerunFilePath = sys.argv[RERUN_INPUT_FILE]
+    RERUN_OUTPUT_PATH = sys.argv[RERUN_OUTPUT_FILE]
+    rerunParentArgs = sys.argv[MINIMUM_RERUN_ARGUMENT_COUNT:]
+    with open(rerunFilePath, encoding="utf-8") as rerunFile:
+        rerunRawLine = rerunFile.read().strip()
+
+    # re-run debug title
+    print(formatPrompt(DEBUG_TITLE + "\n"))
+
+    # set rerun text file argument, preserving the parent process arguments
+    sys.argv = [sys.argv[FILE_PATH], rerunFilePath] + rerunParentArgs
+
+    # enable re-run fix being used
+    INVERT_YEAR_FALLBACK = True
 
 # valid argument(s)
 if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUMENT]):
@@ -664,7 +954,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
 
     # print debugging info to help build PTN filtering rules
     if isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true"):
-        ptnFilterDebug(parsedMovies, ConsoleDebug())
+        ptnFilterDebug(parsedMovies)
 
     # remap resolution and quality values (personal preference)
     parsedMovies["resolution"] = parsedMovies["resolution"].replace(
@@ -838,6 +1128,14 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
 
     parsedMovies = parsedMovies[finalColumnOrder]
 
+    # output newline to avoid overwriting progress bar
+    print()
+
+    # print debugging info to fix final output issues
+    if isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true"):
+        RERUN_TEXT_FILE = textFile
+        finalOutputDebug(parsedMovies)
+
     # convert df to CSV
     # if appending data no headers needed
     if isArgumentPresent(APPENDING_ARGUMENT_OFFSET, "true"):
@@ -846,9 +1144,6 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
         csv = parsedMovies.rename(columns=str.upper).to_csv(header=True, index=False)
     else:
         csv = parsedMovies.to_csv(header=True, index=False)
-
-    # output newline to avoid overwriting progress bar
-    print()
 
     # warn if any movies were not found by the TMDB API
     if incompleteMovieCount > 0:
@@ -859,7 +1154,14 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
             )
         )
 
-    pyperclip.copy(csv)  # copy to clipboard
-    print(VALID_ARGUMENT)
+    if RERUN_OUTPUT_PATH:  # write rerun output to file
+        with open(RERUN_OUTPUT_PATH, "w", encoding="utf-8", newline="") as rerunOut:
+            rerunOut.write(csv)
+        print(formatPrompt(VALID_DEBUG_OUTPUT))
+        if DEBUG_ON_RERUN:  # wait for user input to close subprocess
+            ConsoleDebug().waitForAnyKey()
+    else:
+        pyperclip.copy(csv)  # copy to clipboard
+        print(VALID_OUTPUT)
 else:  # invalid argument(s)
     printError(INVALID_ARGUMENT, INVALID_FILENAME)
