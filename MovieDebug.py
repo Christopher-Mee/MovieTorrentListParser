@@ -412,7 +412,7 @@ class MovieDebug:
             ("Open IMDb URL(s)", lambda: self.promptOpenIMDbUrl(parsedMovies, dout)),
             ("Edit row", lambda: self.promptRowCorrection(parsedMovies, dout)),
             (
-                "Re-run row using TMDb search-year fallback",
+                "rerun row using original torrent name with TMDb search-year fallback",
                 lambda: self.promptRerunMovieWithSearchYearFallback(parsedMovies, dout),
             ),
         ]
