@@ -68,13 +68,6 @@ class MovieDebug:
         # initialize variables
         self.inputTextFilePath = None
 
-    def getTorrentNameFromFile(self, textFilePath, fileLineNumber):
-        with open(textFilePath, encoding="utf-8") as f:
-            for currentLineNumber, line in enumerate(f, start=1):
-                if currentLineNumber == fileLineNumber:
-                    return line.rstrip("\r\n")
-        return None
-
     def dfToStringLJust(self, df, naRep="NaN", index=True):
         dfFilled = df.fillna(naRep)
         widths = {
@@ -96,6 +89,58 @@ class MovieDebug:
             self.dfToStringLJust(df, naRep=self.NA_REPLACEMENT_DEBUG_OUTPUT)
             if self.LEFT_JUSTIFY_DEBUG_OUTPUT
             else df.to_string(na_rep=self.NA_REPLACEMENT_DEBUG_OUTPUT)
+        )
+
+    def promptRowCorrection(self, parsedMovies, debugOut, refreshTable=None):
+        result = self.consoleInput.promptRowSelection(parsedMovies, debugOut)
+        if result is None:
+            return  # cancel
+        rowSelection, firstRow = result
+        rowSelectionLabel = parsedMovies.index[rowSelection - firstRow]
+
+        titleCol = next(col for col in parsedMovies.columns if col.lower() == "title")
+        yearCol = next(col for col in parsedMovies.columns if col.lower() == "year")
+        oldTitle = parsedMovies.loc[rowSelectionLabel, titleCol]
+        oldYear = parsedMovies.loc[rowSelectionLabel, yearCol]
+
+        # row new title input
+        newTitle = input(
+            self.consoleInput.formatPrompt(
+                'New title (blank to keep "{oldTitle}"): ', oldTitle=oldTitle
+            )
+        ).strip()
+
+        # row new year input
+        yearPrompt = self.consoleInput.formatPrompt(
+            "New year (blank to keep {oldYear}): ", oldYear=oldYear
+        )
+        newYearStr = input(yearPrompt).strip()
+        while newYearStr:
+            try:
+                parsedMovies.loc[rowSelectionLabel, yearCol] = int(newYearStr)
+                break
+            except ValueError:
+                newYearStr = debugOut.reAskSameLine(yearPrompt)
+
+        if newTitle:
+            parsedMovies.loc[rowSelectionLabel, titleCol] = newTitle
+
+        print(
+            "\n"
+            + self.consoleInput.formatPrompt(
+                "Row {rowIndex} Old - Title, Year: {title}, {year}",
+                rowIndex=rowSelection,
+                title=oldTitle,
+                year=oldYear,
+            )
+            + "\n"
+            + self.consoleInput.formatPrompt(
+                "Row {rowIndex} New - Title, Year: {title}, {year}",
+                rowIndex=rowSelection,
+                title=parsedMovies.loc[rowSelectionLabel, titleCol],
+                year=parsedMovies.loc[rowSelectionLabel, yearCol],
+            )
+            + "\n"
         )
 
     def screenDebugTable(
@@ -182,122 +227,53 @@ class MovieDebug:
             buildDfDebug=self.buildPtnFilterDfDebug,
         )
 
-    def finalOutputDebug(self, parsedMovies, inputTextFilePath):
-        self.inputTextFilePath = inputTextFilePath
-        self.screenDebugTable(
-            parsedMovies,
-            debugTitle="\n" + "Final Output Screening:",
-            onEditSelection=self.promptOptionsMenu,
-            debugPrompt="Clear debug output and finish? Or edit row? [Y/N/E]:",
-        )
+    def extractUrl(self, text):
+        if not isinstance(text, str):
+            return None
+        match = re.search(r'https?://[^\s"\'<>\]\)]+', text)
+        if not match:
+            return None
+        return match.group(0).rstrip(".,;")
 
-    def promptRowCorrection(self, parsedMovies, debugOut, refreshTable=None):
-        result = self.consoleInput.promptRowSelection(parsedMovies, debugOut)
+    def openUrl(self, url):
+        if url:
+            webbrowser.open_new_tab(url)
+
+    def buildUrlListFromDf(self, parsedMovies, IMDbCol):
+        return [self.extractUrl(cellValue) for cellValue in parsedMovies[IMDbCol]]
+
+    def openAllUrlsFromDf(self, parsedMovies, IMDbCol):
+        tabOpenDelay = self.TAB_OPEN_DELAY
+        firstUrl = True
+        for url in self.buildUrlListFromDf(parsedMovies, IMDbCol):
+            if url:
+                if not firstUrl:
+                    time.sleep(tabOpenDelay)
+                self.openUrl(url)
+                firstUrl = False
+
+    def promptOpenIMDbUrl(self, parsedMovies, debugOut):
+        result = self.consoleInput.promptRowSelection(
+            parsedMovies, debugOut, allowAll=True
+        )
         if result is None:
-            return  # cancel
-        rowSelection, firstRow = result
-        rowSelectionLabel = parsedMovies.index[rowSelection - firstRow]
+            return
 
-        titleCol = next(col for col in parsedMovies.columns if col.lower() == "title")
-        yearCol = next(col for col in parsedMovies.columns if col.lower() == "year")
-        oldTitle = parsedMovies.loc[rowSelectionLabel, titleCol]
-        oldYear = parsedMovies.loc[rowSelectionLabel, yearCol]
+        selectedIndex, firstRow = result
+        if selectedIndex == self.consoleInput.ALL_ROWS:
+            self.openAllUrlsFromDf(parsedMovies, self.IMDB_COL)
+            return
 
-        # row new title input
-        newTitle = input(
-            self.consoleInput.formatPrompt(
-                'New title (blank to keep "{oldTitle}"): ', oldTitle=oldTitle
-            )
-        ).strip()
+        selectedRowIndex = parsedMovies.index[selectedIndex - firstRow]
+        IMDbUrl = self.extractUrl(parsedMovies.loc[selectedRowIndex, self.IMDB_COL])
+        self.openUrl(IMDbUrl)
 
-        # row new year input
-        yearPrompt = self.consoleInput.formatPrompt(
-            "New year (blank to keep {oldYear}): ", oldYear=oldYear
-        )
-        newYearStr = input(yearPrompt).strip()
-        while newYearStr:
-            try:
-                parsedMovies.loc[rowSelectionLabel, yearCol] = int(newYearStr)
-                break
-            except ValueError:
-                newYearStr = debugOut.reAskSameLine(yearPrompt)
-
-        if newTitle:
-            parsedMovies.loc[rowSelectionLabel, titleCol] = newTitle
-
-        print(
-            "\n"
-            + self.consoleInput.formatPrompt(
-                "Row {rowIndex} Old - Title, Year: {title}, {year}",
-                rowIndex=rowSelection,
-                title=oldTitle,
-                year=oldYear,
-            )
-            + "\n"
-            + self.consoleInput.formatPrompt(
-                "Row {rowIndex} New - Title, Year: {title}, {year}",
-                rowIndex=rowSelection,
-                title=parsedMovies.loc[rowSelectionLabel, titleCol],
-                year=parsedMovies.loc[rowSelectionLabel, yearCol],
-            )
-            + "\n"
-        )
-
-    def promptOptionsMenu(self, parsedMovies, callerDebugOut, refreshTable=None):
-        dout = ConsoleDebug()
-
-        optionsTitle = "Debug Options:"
-        optionsList = [
-            ("Open IMDb URL(s)", lambda: self.promptOpenIMDbUrl(parsedMovies, dout)),
-            ("Edit row", lambda: self.promptRowCorrection(parsedMovies, dout)),
-            (
-                "Re-run row using TMDb search-year fallback",
-                lambda: self.promptRerunMovieWithSearchYearFallback(parsedMovies, dout),
-            ),
-        ]
-        firstOption = 1
-        lastOption = firstOption + len(optionsList) - 1
-
-        optionsMenu = (
-            "\n"
-            + optionsTitle
-            + "\n"
-            + "\n".join(
-                f"{number}) {label}"
-                for number, (label, _) in enumerate(optionsList, start=firstOption)
-            )
-            + "\n"
-        )
-        optionsPrompt = "Select option ({firstOption}-{lastOption}, blank to exit): "
-
-        # format options prompts
-        formattedMenu = self.consoleInput.formatPrompt(optionsMenu)
-        formattedPrompt = self.consoleInput.formatPrompt(
-            optionsPrompt, firstOption=firstOption, lastOption=lastOption
-        )
-
-        while True:
-            # print options menu
-            dout.print(formattedMenu)
-
-            # options menu input
-            selectionStr = self.consoleInput.promptNumberInRange(
-                formattedPrompt, dout, firstOption, lastOption
-            )
-            if not selectionStr:
-                dout.clear()
-                return self.SKIP_WAIT
-
-            # process selection
-            selection = int(selectionStr)
-            _, onSelection = optionsList[selection - firstOption]
-            onSelection()
-
-            dout.waitForAnyKey()
-            dout.clear()
-            if refreshTable is not None:
-                callerDebugOut.clear()
-                refreshTable()
+    def getTorrentNameFromFile(self, textFilePath, fileLineNumber):
+        with open(textFilePath, encoding="utf-8") as f:
+            for currentLineNumber, line in enumerate(f, start=1):
+                if currentLineNumber == fileLineNumber:
+                    return line.rstrip("\r\n")
+        return None
 
     def promptRerunMovieWithSearchYearFallback(self, parsedMovies, debugOut):
         # prompts and titles
@@ -428,43 +404,67 @@ class MovieDebug:
 
         print(self.consoleInput.formatPrompt(rerunAcceptedResult, lineIndex=lineIndex))
 
-    def extractUrl(self, text):
-        if not isinstance(text, str):
-            return None
-        match = re.search(r'https?://[^\s"\'<>\]\)]+', text)
-        if not match:
-            return None
-        return match.group(0).rstrip(".,;")
+    def promptOptionsMenu(self, parsedMovies, callerDebugOut, refreshTable=None):
+        dout = ConsoleDebug()
 
-    def openUrl(self, url):
-        if url:
-            webbrowser.open_new_tab(url)
+        optionsTitle = "Debug Options:"
+        optionsList = [
+            ("Open IMDb URL(s)", lambda: self.promptOpenIMDbUrl(parsedMovies, dout)),
+            ("Edit row", lambda: self.promptRowCorrection(parsedMovies, dout)),
+            (
+                "Re-run row using TMDb search-year fallback",
+                lambda: self.promptRerunMovieWithSearchYearFallback(parsedMovies, dout),
+            ),
+        ]
+        firstOption = 1
+        lastOption = firstOption + len(optionsList) - 1
 
-    def buildUrlListFromDf(self, parsedMovies, IMDbCol):
-        return [self.extractUrl(cellValue) for cellValue in parsedMovies[IMDbCol]]
-
-    def openAllUrlsFromDf(self, parsedMovies, IMDbCol):
-        tabOpenDelay = self.TAB_OPEN_DELAY
-        firstUrl = True
-        for url in self.buildUrlListFromDf(parsedMovies, IMDbCol):
-            if url:
-                if not firstUrl:
-                    time.sleep(tabOpenDelay)
-                self.openUrl(url)
-                firstUrl = False
-
-    def promptOpenIMDbUrl(self, parsedMovies, debugOut):
-        result = self.consoleInput.promptRowSelection(
-            parsedMovies, debugOut, allowAll=True
+        optionsMenu = (
+            "\n"
+            + optionsTitle
+            + "\n"
+            + "\n".join(
+                f"{number}) {label}"
+                for number, (label, _) in enumerate(optionsList, start=firstOption)
+            )
+            + "\n"
         )
-        if result is None:
-            return
+        optionsPrompt = "Select option ({firstOption}-{lastOption}, blank to exit): "
 
-        selectedIndex, firstRow = result
-        if selectedIndex == self.consoleInput.ALL_ROWS:
-            self.openAllUrlsFromDf(parsedMovies, self.IMDB_COL)
-            return
+        # format options prompts
+        formattedMenu = self.consoleInput.formatPrompt(optionsMenu)
+        formattedPrompt = self.consoleInput.formatPrompt(
+            optionsPrompt, firstOption=firstOption, lastOption=lastOption
+        )
 
-        selectedRowIndex = parsedMovies.index[selectedIndex - firstRow]
-        IMDbUrl = self.extractUrl(parsedMovies.loc[selectedRowIndex, self.IMDB_COL])
-        self.openUrl(IMDbUrl)
+        while True:
+            # print options menu
+            dout.print(formattedMenu)
+
+            # options menu input
+            selectionStr = self.consoleInput.promptNumberInRange(
+                formattedPrompt, dout, firstOption, lastOption
+            )
+            if not selectionStr:
+                dout.clear()
+                return self.SKIP_WAIT
+
+            # process selection
+            selection = int(selectionStr)
+            _, onSelection = optionsList[selection - firstOption]
+            onSelection()
+
+            dout.waitForAnyKey()
+            dout.clear()
+            if refreshTable is not None:
+                callerDebugOut.clear()
+                refreshTable()
+
+    def finalOutputDebug(self, parsedMovies, inputTextFilePath):
+        self.inputTextFilePath = inputTextFilePath
+        self.screenDebugTable(
+            parsedMovies,
+            debugTitle="\n" + "Final Output Screening:",
+            onEditSelection=self.promptOptionsMenu,
+            debugPrompt="Clear debug output and finish? Or edit row? [Y/N/E]:",
+        )
