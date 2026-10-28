@@ -490,7 +490,7 @@ consoleInput = ConsoleInput(
     MATCH_TEXT_FILE_INDEX=MATCH_TEXT_FILE_INDEX,
 )
 movieDebug = MovieDebug(
-    inputs=consoleInput,
+    consoleInput=consoleInput,
     isArgumentPresent=isArgumentPresent,
     extractMovieTags=extractMovieTags,
     extractExcessMovieTags=extractExcessMovieTags,
@@ -768,8 +768,7 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
         )
 
     if RERUN_OUTPUT_PATH:  # write rerun output to file
-        with open(RERUN_OUTPUT_PATH, "w", encoding="utf-8", newline="") as rerunOut:
-            rerunOut.write(csv)
+        parsedMovies.to_pickle(RERUN_OUTPUT_PATH)
         print(consoleInput.formatPrompt(VALID_DEBUG_OUTPUT))
         if DEBUG_ON_RERUN_ENABLED:  # wait for user input to close subprocess
             ConsoleDebug().waitForAnyKey()
