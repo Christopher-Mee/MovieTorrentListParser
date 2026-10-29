@@ -16,6 +16,7 @@ from pathlib import Path  # File path handling
 import pandas as pd  # Pandas (dataframes)
 
 from ConsoleDebug import ConsoleDebug  # print and clear console output
+from ConsoleInput import BlankMeans  # return value on blank selection
 
 
 class MovieDebug:
@@ -91,12 +92,28 @@ class MovieDebug:
             else df.to_string(na_rep=self.NA_REPLACEMENT_DEBUG_OUTPUT)
         )
 
-    def promptRowCorrection(self, parsedMovies, debugOut, refreshTable=None):
+    def promptRowCorrection(
+        self, parsedMovies, debugOut, _refreshTable=None, *, offerIMDb=False
+    ):
         result = self.consoleInput.promptRowSelection(parsedMovies, debugOut)
         if result is None:
             return  # cancel
         rowSelection, firstRow = result
         rowSelectionLabel = parsedMovies.index[rowSelection - firstRow]
+
+        # open IMDb URL if more info is needed before row correction
+        if offerIMDb and self.IMDB_COL in parsedMovies.columns:
+            imdbUrl = self.extractUrl(
+                parsedMovies.loc[rowSelectionLabel, self.IMDB_COL]
+            )
+            if imdbUrl:
+                openIMDbUrlPrompt = self.consoleInput.formatPrompt(
+                    "Open the IMDb URL? (Y/N, blank=Y): "
+                )
+                if self.consoleInput.promptYesNo(
+                    openIMDbUrlPrompt, debugOut, onBlank=BlankMeans.Yes
+                ):
+                    self.openUrl(imdbUrl)
 
         titleCol = next(col for col in parsedMovies.columns if col.lower() == "title")
         yearCol = next(col for col in parsedMovies.columns if col.lower() == "year")
@@ -303,7 +320,7 @@ class MovieDebug:
 
         # debug selection
         debugSelection = self.consoleInput.promptYesNo(
-            debugOnRerunPrompt, debugOut, blankMeansNo=True
+            debugOnRerunPrompt, debugOut, onBlank=BlankMeans.No
         )
 
         # get original torrent name
@@ -410,7 +427,10 @@ class MovieDebug:
         optionsTitle = "Debug Options:"
         optionsList = [
             ("Open IMDb URL(s)", lambda: self.promptOpenIMDbUrl(parsedMovies, dout)),
-            ("Edit row", lambda: self.promptRowCorrection(parsedMovies, dout)),
+            (
+                "Edit row",
+                lambda: self.promptRowCorrection(parsedMovies, dout, offerIMDb=True),
+            ),
             (
                 "rerun row using original torrent name with TMDb search-year fallback",
                 lambda: self.promptRerunMovieWithSearchYearFallback(parsedMovies, dout),

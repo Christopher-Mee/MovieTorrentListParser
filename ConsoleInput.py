@@ -3,6 +3,13 @@
 # Reusable console prompts
 
 import string  # String formatting
+from enum import Enum, auto  # Blank input selection
+
+
+class BlankMeans(Enum):
+    Yes = auto()
+    No = auto()
+    RequireAnswer = auto()
 
 
 class ConsoleInput:
@@ -31,16 +38,27 @@ class ConsoleInput:
             template = "".join(parts)
         return template.format(**values)
 
-    def promptYesNo(self, prompt, debugOut, blankMeansNo=False):
-        # return True for yes, False for no, or "" when blank
+    def promptYesNo(self, prompt, debugOut, onBlank=BlankMeans.RequireAnswer):
+        # return True for yes, False for no, or default value for blank
+        # RequireAnswer rejects blank and asks again.
+        if not isinstance(onBlank, BlankMeans):
+            raise TypeError("onBlank must be a BlankMeans enum value")
+
         answer = input(prompt).strip().lower()
-        if blankMeansNo and self.BLANK == answer:
-            return False
-        while answer not in ("y", "n"):
+        while True:
+            if answer in ("y", "n"):
+                return answer == "y"
+
+            if self.BLANK == answer:
+                match onBlank:
+                    case BlankMeans.Yes:
+                        return True
+                    case BlankMeans.No:
+                        return False
+                    case BlankMeans.RequireAnswer:
+                        pass  # fall through to reAskSameLine
+
             answer = debugOut.reAskSameLine(prompt).strip().lower()
-            if blankMeansNo and self.BLANK == answer:
-                return False
-        return answer == "y"
 
     def promptNumberInRange(
         self, prompt, debugOut, firstOption, lastOption, extraChoices=()
