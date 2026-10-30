@@ -120,7 +120,7 @@ class MovieDebug:
         oldTitle = parsedMovies.loc[rowSelectionLabel, titleCol]
         oldYear = parsedMovies.loc[rowSelectionLabel, yearCol]
 
-        # row new title input
+        # preserve movie tags
         titleOnly = oldTitle
         tagSuffix = ""
         if isinstance(oldTitle, str):
@@ -128,6 +128,7 @@ class MovieDebug:
                 titleOnly = oldTitle[: match.start()]
                 tagSuffix = match.group(1)
 
+        # row new title input
         newTitle = input(
             self.consoleInput.formatPrompt(
                 'New title (blank to keep "{titleOnly}"): ', titleOnly=titleOnly
