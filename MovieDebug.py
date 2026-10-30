@@ -121,9 +121,16 @@ class MovieDebug:
         oldYear = parsedMovies.loc[rowSelectionLabel, yearCol]
 
         # row new title input
+        titleOnly = oldTitle
+        tagSuffix = ""
+        if isinstance(oldTitle, str):
+            if match := re.search(r"(\s+(?:\[[^\[\]]+\]\s*)+)$", oldTitle):
+                titleOnly = oldTitle[: match.start()]
+                tagSuffix = match.group(1)
+
         newTitle = input(
             self.consoleInput.formatPrompt(
-                'New title (blank to keep "{oldTitle}"): ', oldTitle=oldTitle
+                'New title (blank to keep "{titleOnly}"): ', titleOnly=titleOnly
             )
         ).strip()
 
@@ -140,7 +147,7 @@ class MovieDebug:
                 newYearStr = debugOut.reAskSameLine(yearPrompt)
 
         if newTitle:
-            parsedMovies.loc[rowSelectionLabel, titleCol] = newTitle
+            parsedMovies.loc[rowSelectionLabel, titleCol] = newTitle + tagSuffix
 
         print(
             "\n"
