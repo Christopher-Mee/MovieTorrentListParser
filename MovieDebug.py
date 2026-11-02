@@ -26,18 +26,21 @@ class MovieDebug:
 
     def __init__(
         self,
-        consoleInput,
         *,
+        consoleInput,
         isArgumentPresent,
         extractMovieTags,
         extractExcessMovieTags,
         UPPERCASE_CSV_HEADERS=True,
+        COMBINE_DEFAULT_FOREIGN_TITLES,
+        ADD_TAGS_TO_TITLE,
         MATCH_TEXT_FILE_INDEX=True,
         LEFT_JUSTIFY_DEBUG_OUTPUT=True,
         FILTER_PTN_DEBUG_OUTPUT=True,
         NA_REPLACEMENT_DEBUG_OUTPUT="",
-        FILE_PATH,
+        FOREIGN_MOVIE_SPLITTER,
         TEXT_FILE_ARGUMENT,
+        FILE_PATH,
         APPENDING,
         HYPERLINK_STYLE,
         DEBUGGING,
@@ -52,12 +55,15 @@ class MovieDebug:
         self.extractMovieTags = extractMovieTags
         self.extractExcessMovieTags = extractExcessMovieTags
         self.UPPERCASE_CSV_HEADERS = UPPERCASE_CSV_HEADERS
+        self.COMBINE_DEFAULT_FOREIGN_TITLES = COMBINE_DEFAULT_FOREIGN_TITLES
+        self.ADD_TAGS_TO_TITLE = ADD_TAGS_TO_TITLE
         self.MATCH_TEXT_FILE_INDEX = MATCH_TEXT_FILE_INDEX
         self.LEFT_JUSTIFY_DEBUG_OUTPUT = LEFT_JUSTIFY_DEBUG_OUTPUT
         self.FILTER_PTN_DEBUG_OUTPUT = FILTER_PTN_DEBUG_OUTPUT
         self.NA_REPLACEMENT_DEBUG_OUTPUT = NA_REPLACEMENT_DEBUG_OUTPUT
-        self.FILE_PATH = FILE_PATH
+        self.FOREIGN_MOVIE_SPLITTER = FOREIGN_MOVIE_SPLITTER
         self.TEXT_FILE_ARGUMENT = TEXT_FILE_ARGUMENT
+        self.FILE_PATH = FILE_PATH
         self.APPENDING = APPENDING
         self.HYPERLINK_STYLE = HYPERLINK_STYLE
         self.DEBUGGING = DEBUGGING
@@ -92,8 +98,47 @@ class MovieDebug:
             else df.to_string(na_rep=self.NA_REPLACEMENT_DEBUG_OUTPUT)
         )
 
+    def prepareFinalTitleCorrection(self, rowData, oldTitle, debugOut):
+        # open IMDb URL if more info is needed for row correction
+        if imdbUrl := self.extractUrl(rowData.get(self.IMDB_COL)):
+            openIMDbUrlPrompt = self.consoleInput.formatPrompt(
+                "Open the IMDb URL? (Y/N, blank=Y): "
+            )
+            if self.consoleInput.promptYesNo(
+                openIMDbUrlPrompt, debugOut, onBlank=BlankMeans.Yes
+            ):
+                self.openUrl(imdbUrl)
+
+        # preserve transliterated title and movie tags
+        titleOnly = oldTitle
+        foreignTitlePrefix = ""
+        tagSuffix = ""
+        if isinstance(oldTitle, str):
+            # movie tags
+            if self.ADD_TAGS_TO_TITLE:
+                if match := re.search(r"(\s+(?:\[[^\[\]]+\]\s*)+)$", oldTitle):
+                    titleOnly = oldTitle[: match.start()]
+                    tagSuffix = match.group(1)
+
+            # transliterated title
+            if self.COMBINE_DEFAULT_FOREIGN_TITLES:
+                foreignTitle, separator, englishTitle = titleOnly.partition(
+                    self.FOREIGN_MOVIE_SPLITTER
+                )
+
+                if separator:  # found, then 2 titles exist
+                    foreignTitlePrefix = foreignTitle + separator
+                    titleOnly = englishTitle
+
+        return titleOnly, foreignTitlePrefix, tagSuffix
+
     def promptRowCorrection(
-        self, parsedMovies, debugOut, _refreshTable=None, *, offerIMDb=False
+        self,
+        parsedMovies,
+        debugOut,
+        _refreshTable=None,
+        *,
+        editingFinalTitle=False,
     ):
         result = self.consoleInput.promptRowSelection(parsedMovies, debugOut)
         if result is None:
@@ -101,32 +146,19 @@ class MovieDebug:
         rowSelection, firstRow = result
         rowSelectionLabel = parsedMovies.index[rowSelection - firstRow]
 
-        # open IMDb URL if more info is needed before row correction
-        if offerIMDb and self.IMDB_COL in parsedMovies.columns:
-            imdbUrl = self.extractUrl(
-                parsedMovies.loc[rowSelectionLabel, self.IMDB_COL]
-            )
-            if imdbUrl:
-                openIMDbUrlPrompt = self.consoleInput.formatPrompt(
-                    "Open the IMDb URL? (Y/N, blank=Y): "
-                )
-                if self.consoleInput.promptYesNo(
-                    openIMDbUrlPrompt, debugOut, onBlank=BlankMeans.Yes
-                ):
-                    self.openUrl(imdbUrl)
-
         titleCol = next(col for col in parsedMovies.columns if col.lower() == "title")
         yearCol = next(col for col in parsedMovies.columns if col.lower() == "year")
-        oldTitle = parsedMovies.loc[rowSelectionLabel, titleCol]
-        oldYear = parsedMovies.loc[rowSelectionLabel, yearCol]
+        rowData = parsedMovies.loc[rowSelectionLabel]
+        oldTitle = rowData[titleCol]
+        oldYear = rowData[yearCol]
 
-        # preserve movie tags
         titleOnly = oldTitle
+        foreignTitlePrefix = ""
         tagSuffix = ""
-        if isinstance(oldTitle, str):
-            if match := re.search(r"(\s+(?:\[[^\[\]]+\]\s*)+)$", oldTitle):
-                titleOnly = oldTitle[: match.start()]
-                tagSuffix = match.group(1)
+        if editingFinalTitle:
+            titleOnly, foreignTitlePrefix, tagSuffix = self.prepareFinalTitleCorrection(
+                rowData, oldTitle, debugOut
+            )
 
         # row new title input
         newTitle = input(
@@ -148,7 +180,9 @@ class MovieDebug:
                 newYearStr = debugOut.reAskSameLine(yearPrompt)
 
         if newTitle:
-            parsedMovies.loc[rowSelectionLabel, titleCol] = newTitle + tagSuffix
+            parsedMovies.loc[rowSelectionLabel, titleCol] = (
+                foreignTitlePrefix + newTitle + tagSuffix
+            )
 
         print(
             "\n"
@@ -437,7 +471,9 @@ class MovieDebug:
             ("Open IMDb URL(s)", lambda: self.promptOpenIMDbUrl(parsedMovies, dout)),
             (
                 "Edit row",
-                lambda: self.promptRowCorrection(parsedMovies, dout, offerIMDb=True),
+                lambda: self.promptRowCorrection(
+                    parsedMovies, dout, editingFinalTitle=True
+                ),
             ),
             (
                 "rerun row using original torrent name with TMDb search-year fallback",
