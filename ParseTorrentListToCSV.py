@@ -410,6 +410,23 @@ def extractExcessMovieTags(
     return labels.reindex(parsedMovies.index, fill_value="")
 
 
+def convertDfToCsv(parsedMovies):
+    appending = isArgumentPresent(APPENDING_ARGUMENT_OFFSET, "true")
+    header = not appending
+
+    if header and UPPERCASE_CSV_HEADERS:
+        dfExported = parsedMovies.rename(columns=str.upper)
+    else:
+        dfExported = parsedMovies
+
+    return dfExported.to_csv(header=header, index=False)
+
+
+def copyResultsToClipboard(parsedMovies, message):
+    pyperclip.copy(convertDfToCsv(parsedMovies))
+    print(message)
+
+
 MINIMUM_ARGUMENT_COUNT = 2  # script name + text file input
 
 # Arguments indexes
@@ -475,7 +492,7 @@ INVERT_YEAR_FALLBACK = False
 DEBUG_TITLE = "Re-run debug mode launched with search-year fallback enabled:"
 VALID_DEBUG_OUTPUT = "SUCCESS: Re-run debug mode results sent to the main window."
 
-DEBUG_ON_RERUN_ENABLED = False
+DEBUG_ON_RERUN = False
 
 # Foreign movies
 DEFAULT_LANGUAGE_CODE = langNameToCode(DEFAULT_LANGUAGE)
@@ -494,6 +511,7 @@ movieDebug = MovieDebug(
     isArgumentPresent=isArgumentPresent,
     extractMovieTags=extractMovieTags,
     extractExcessMovieTags=extractExcessMovieTags,
+    copyResultsToClipboard=copyResultsToClipboard,
     UPPERCASE_CSV_HEADERS=UPPERCASE_CSV_HEADERS,
     COMBINE_DEFAULT_FOREIGN_TITLES=COMBINE_DEFAULT_FOREIGN_TITLES,
     ADD_TAGS_TO_TITLE=ADD_TAGS_TO_TITLE,
@@ -520,9 +538,8 @@ if (
 ):
     rerunFilePath = sys.argv[RERUN_INPUT_FILE]
     RERUN_OUTPUT_PATH = sys.argv[RERUN_OUTPUT_FILE]
+
     rerunParentArgs = sys.argv[MINIMUM_RERUN_ARGUMENT_COUNT:]
-    with open(rerunFilePath, encoding="utf-8") as rerunFile:
-        rerunRawLine = rerunFile.read().strip()
 
     # re-run debug title
     print(consoleInput.formatPrompt(DEBUG_TITLE + "\n"))
@@ -531,7 +548,7 @@ if (
     sys.argv = [sys.argv[FILE_PATH], rerunFilePath] + rerunParentArgs
 
     # set the behavior of the subprocess (wait for user or auto-exit)
-    DEBUG_ON_RERUN_ENABLED = isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true")
+    DEBUG_ON_RERUN = isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true")
 
     # enable re-run fix being used
     INVERT_YEAR_FALLBACK = True
@@ -540,15 +557,12 @@ if (
 if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUMENT]):
     textFile = sys.argv[TEXT_FILE_ARGUMENT]  # IMDB database access
 
-    # parse file and concatenate to a df
+    # parse torrent list and create a dataframe
     parsedTextFile = pd.DataFrame()
     try:
         with open(textFile, encoding="utf-8") as f:
-            for line in f:
-                df_dictionary = pd.DataFrame([PTN.parse(line)])
-                parsedTextFile = pd.concat(
-                    [parsedTextFile, df_dictionary], ignore_index=True
-                )
+            parsedTorrentList = [PTN.parse(line) for line in f]
+        parsedTextFile = pd.DataFrame(parsedTorrentList)
     except IOError as e:
         printError(INVALID_ARGUMENT, FILE_NOT_FOUND, textFile)
 
@@ -752,15 +766,6 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
     if isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true"):
         movieDebug.finalOutputDebug(parsedMovies, textFile)
 
-    # convert df to CSV
-    # if appending data no headers needed
-    if isArgumentPresent(APPENDING_ARGUMENT_OFFSET, "true"):
-        csv = parsedMovies.to_csv(header=False, index=False)
-    elif UPPERCASE_CSV_HEADERS:
-        csv = parsedMovies.rename(columns=str.upper).to_csv(header=True, index=False)
-    else:
-        csv = parsedMovies.to_csv(header=True, index=False)
-
     # warn if any movies were not found by the TMDB API
     if incompleteMovieCount > 0:
         print(
@@ -773,10 +778,9 @@ if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARG
     if RERUN_OUTPUT_PATH:  # write rerun output to file
         parsedMovies.to_pickle(RERUN_OUTPUT_PATH)
         print(consoleInput.formatPrompt(VALID_DEBUG_OUTPUT))
-        if DEBUG_ON_RERUN_ENABLED:  # wait for user input to close subprocess
+        if DEBUG_ON_RERUN:  # wait for user input to close subprocess
             ConsoleDebug().waitForAnyKey()
     else:
-        pyperclip.copy(csv)  # copy to clipboard
-        print(VALID_OUTPUT)
+        copyResultsToClipboard(parsedMovies, VALID_OUTPUT)
 else:  # invalid argument(s)
     printError(INVALID_ARGUMENT, INVALID_FILENAME)

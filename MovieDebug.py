@@ -23,6 +23,7 @@ class MovieDebug:
     TAB_OPEN_DELAY = 0.1
     SKIP_WAIT = True
     IMDB_COL = "IMDB"
+    COPIED_TO_CLIPBOARD_MSG = "Current debug CSV results copied to your clipboard."
 
     def __init__(
         self,
@@ -31,6 +32,7 @@ class MovieDebug:
         isArgumentPresent,
         extractMovieTags,
         extractExcessMovieTags,
+        copyResultsToClipboard,
         UPPERCASE_CSV_HEADERS=True,
         COMBINE_DEFAULT_FOREIGN_TITLES,
         ADD_TAGS_TO_TITLE,
@@ -54,6 +56,7 @@ class MovieDebug:
         self.isArgumentPresent = isArgumentPresent
         self.extractMovieTags = extractMovieTags
         self.extractExcessMovieTags = extractExcessMovieTags
+        self.copyResultsToClipboard = copyResultsToClipboard
         self.UPPERCASE_CSV_HEADERS = UPPERCASE_CSV_HEADERS
         self.COMBINE_DEFAULT_FOREIGN_TITLES = COMBINE_DEFAULT_FOREIGN_TITLES
         self.ADD_TAGS_TO_TITLE = ADD_TAGS_TO_TITLE
@@ -478,6 +481,13 @@ class MovieDebug:
             (
                 "rerun row using original torrent name with TMDb search-year fallback",
                 lambda: self.promptRerunMovieWithSearchYearFallback(parsedMovies, dout),
+            ),
+            (
+                "Copy current results to clipboard",
+                lambda: self.copyResultsToClipboard(
+                    parsedMovies,
+                    self.consoleInput.formatPrompt("\n" + self.COPIED_TO_CLIPBOARD_MSG),
+                ),
             ),
         ]
         firstOption = 1
