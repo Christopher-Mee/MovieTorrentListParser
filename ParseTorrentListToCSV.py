@@ -572,6 +572,8 @@ if (
             INVERT_YEAR_FALLBACK = True
         case movieDebug.SPOKEN_LANG_SELECTION:
             INCLUDE_SPOKEN_LANGUAGES = True
+        case movieDebug.NORMAL_RERUN_WITH_DEBUGGING:
+            pass
         case _:
             print(
                 consoleInput.formatPrompt(

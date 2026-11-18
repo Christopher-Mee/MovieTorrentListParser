@@ -37,6 +37,7 @@ class MovieDebug:
     # RERUN MODES
     SEARCH_YEAR_FALLBACK = "search-year fallback"
     SPOKEN_LANG_SELECTION = "spoken language selection"
+    NORMAL_RERUN_WITH_DEBUGGING = "normal rerun plus debugging"
 
     # LANGUAGE SELECTION
     LANG_CODE_KEY = "iso_639_1"
@@ -382,9 +383,7 @@ class MovieDebug:
 
     def promptRerun(self, parsedMovies, debugOut, rerunMode, *, beforeRerun=None):
         # prompts and titles
-        debugOnRerunPrompt = (
-            "Enable debugging for the re-run search? (Y/N, blank to skip): "
-        )
+        debugOnRerunPrompt = "Enable debugging for the re-run? (Y/N, blank to skip): "
         rerunPromptTitle = "\nRe-running line {lineIndex} with {rerunMode}:"
         applyChangesPrompt = "\nApply these changes? [Y/N]: "
 
@@ -413,11 +412,14 @@ class MovieDebug:
             beforeRerun(rowData)
 
         # debug selection
-        debugSelection = self.consoleInput.promptYesNo(
-            self.consoleInput.formatPrompt(debugOnRerunPrompt),
-            debugOut,
-            onBlank=BlankMeans.No,
-        )
+        if rerunMode == self.NORMAL_RERUN_WITH_DEBUGGING:
+            debugSelection = True
+        else:
+            debugSelection = self.consoleInput.promptYesNo(
+                self.consoleInput.formatPrompt(debugOnRerunPrompt),
+                debugOut,
+                onBlank=BlankMeans.No,
+            )
 
         # get original torrent name
         lineIndex = (
@@ -612,6 +614,11 @@ class MovieDebug:
         dOut.clear()
         return selectedLangCode
 
+    def promptNormalRerun(self, parsedMovies, debugOut):
+        return self.promptRerun(
+            parsedMovies, debugOut, self.NORMAL_RERUN_WITH_DEBUGGING
+        )
+
     def promptOptionsMenu(self, parsedMovies, callerDebugOut, refreshTable=None):
         dout = ConsoleDebug()
 
@@ -633,6 +640,10 @@ class MovieDebug:
                 lambda: self.promptRerunMovieWithSpokenLangSelection(
                     parsedMovies, dout
                 ),
+            ),
+            (
+                "rerun row using original torrent name with debugging enabled",
+                lambda: self.promptNormalRerun(parsedMovies, dout),
             ),
             (
                 "Copy current results to clipboard",
