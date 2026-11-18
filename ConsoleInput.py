@@ -64,7 +64,7 @@ class ConsoleInput:
         self, prompt, debugOut, firstOption, lastOption, extraChoices=()
     ):
         # return the entered number/choice string, or "" when blank
-        selectionStr = input(prompt).strip().lower()
+        selectionStr = debugOut.autoScrollThenChoose(prompt)
         while selectionStr and not (
             selectionStr in extraChoices
             or (

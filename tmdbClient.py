@@ -174,10 +174,17 @@ def getAdditionalMovieInfo(internalID, appendedToCallList):
 # 1) Movie title w/ special characters included
 # 2) 'IMDB' ID
 # 'None' for all fields, if NO search results are found, or the 'IMDB' ID is unknown.
-def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
+def getMovieInfo(
+    title,
+    releaseYear,
+    defaultLangCode,
+    *,
+    invertFallback=False,
+    includeSpokenLanguages=False,
+):
     rawTitle = originalTitle = originCountry = alternativeTitles = langCode = imdbId = (
         isForeignMovie
-    ) = None
+    ) = spokenLanguages = None
     Done = forceYearFallback = False
     while not Done:
         movieSearchResults = searchMovie(
@@ -211,7 +218,7 @@ def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
         langCode = firstResult.get("original_language")
 
         isForeignMovie = defaultLangCode != langCode
-        if isForeignMovie and (
+        if (isForeignMovie or includeSpokenLanguages) and (
             additionalMovieInfo := getAdditionalMovieInfo(
                 internalId, [AppendToResponse.ALTERNATIVE_TITLES]
             )
@@ -221,6 +228,9 @@ def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
             )
             originCountry = additionalMovieInfo.get("origin_country")
             originalTitle = firstResult["original_title"]
+
+            if includeSpokenLanguages:  # debug incorrect "original_language"
+                spokenLanguages = additionalMovieInfo.get("spoken_languages")
 
         Done = True
 
@@ -232,6 +242,7 @@ def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
         "langCode": langCode,
         "imdbId": imdbId,
         "isForeignMovie": isForeignMovie,
+        "spokenLanguages": spokenLanguages,
     }
 
 

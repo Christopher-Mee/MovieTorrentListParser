@@ -227,7 +227,13 @@ def getLocalTransliteratedTitle(
     return next((v for v in titleVariants if v != titleVariant), None)
 
 
-def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
+def getMovieInfo(
+    title,
+    releaseYear,
+    defaultLangCode,
+    invertFallback=False,
+    includeSpokenLanguages=False,
+):
     movieTitleVariants = splitEnglishForeignTitle(title)
     try:
         for titleVariant in movieTitleVariants:
@@ -236,6 +242,7 @@ def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
                 releaseYear,
                 defaultLangCode,
                 invertFallback=invertFallback,
+                includeSpokenLanguages=includeSpokenLanguages,
             )
 
             imdbId = apiResult.get("imdbId")
@@ -243,6 +250,19 @@ def getMovieInfo(title, releaseYear, defaultLangCode, invertFallback=False):
                 # Convert IMDB id to Link
                 apiResult["imdbId"] = buildIMDBLink(imdbId)
                 apiResult["IMDB"] = apiResult.pop("imdbId")
+
+                # Debug spoken language
+                if includeSpokenLanguages:
+                    spokenLanguageCode = movieDebug.promptSpokenLanguageSelection(
+                        apiResult.get("spokenLanguages"),
+                        movieTitle=title,
+                        releaseYear=releaseYear,
+                        currentLangCode=apiResult.get("langCode"),
+                    )
+                    apiResult["langCode"] = spokenLanguageCode
+                    apiResult["isForeignMovie"] = (
+                        apiResult.get("langCode") != defaultLangCode
+                    )
 
                 # Convert ISO 639-1 language code to full English name (fallback to code if unmapped)
                 apiResult["langCode"] = langCodeToName(apiResult["langCode"])
@@ -303,7 +323,13 @@ def getMovieInfoWrapper(title, releaseYear, defaultLangCode, printProgress):
     if processedMovies == 0:
         printProgress(0)
 
-    movieInfo = getMovieInfo(title, releaseYear, defaultLangCode, INVERT_YEAR_FALLBACK)
+    movieInfo = getMovieInfo(
+        title,
+        releaseYear,
+        defaultLangCode,
+        INVERT_YEAR_FALLBACK,
+        INCLUDE_SPOKEN_LANGUAGES,
+    )
 
     if not movieInfo.get("IMDB"):
         incompleteMovieCount += 1
@@ -480,16 +506,20 @@ FILE_NOT_FOUND = "No such file - "
 INVALID_FILENAME = "Failed to parse filename. Expected a '.txt' file."
 
 # Re-run debug mode
-MINIMUM_RERUN_ARGUMENT_COUNT = 4
+MINIMUM_RERUN_ARGUMENT_COUNT = 5
 RERUN_ARGUMENT = 1
 RERUN_ARGUMENT_FLAG = "--rerun"
-RERUN_INPUT_FILE = 2
-RERUN_OUTPUT_FILE = 3
+RERUN_MODE_ARGUMENT = 2
+RERUN_INPUT_FILE = 3
+RERUN_OUTPUT_FILE = 4
 
+RERUN_MODE = None
 RERUN_OUTPUT_PATH = None
 INVERT_YEAR_FALLBACK = False
+INCLUDE_SPOKEN_LANGUAGES = False
 
-DEBUG_TITLE = "Re-run debug mode launched with search-year fallback enabled:"
+DEBUG_TITLE = "Re-run debug mode launched with {rerunMode} enabled:"
+INVALID_RERUN_MODE = '\n{invalidArgument}Unknown rerun mode - "{rerunMode}" mode\n'
 VALID_DEBUG_OUTPUT = "SUCCESS: Re-run debug mode results sent to the main window."
 
 DEBUG_ON_RERUN = False
@@ -536,22 +566,36 @@ if (
     len(sys.argv) >= MINIMUM_RERUN_ARGUMENT_COUNT
     and sys.argv[RERUN_ARGUMENT] == RERUN_ARGUMENT_FLAG
 ):
+    RERUN_MODE = sys.argv[RERUN_MODE_ARGUMENT]
+    match RERUN_MODE:
+        case movieDebug.SEARCH_YEAR_FALLBACK:
+            INVERT_YEAR_FALLBACK = True
+        case movieDebug.SPOKEN_LANG_SELECTION:
+            INCLUDE_SPOKEN_LANGUAGES = True
+        case _:
+            print(
+                consoleInput.formatPrompt(
+                    INVALID_RERUN_MODE,
+                    invalidArgument=INVALID_ARGUMENT,
+                    rerunMode=RERUN_MODE,
+                )
+            )
+            ConsoleDebug().waitForAnyKey()
+            raise SystemExit(1)
+
     rerunFilePath = sys.argv[RERUN_INPUT_FILE]
     RERUN_OUTPUT_PATH = sys.argv[RERUN_OUTPUT_FILE]
 
     rerunParentArgs = sys.argv[MINIMUM_RERUN_ARGUMENT_COUNT:]
 
     # re-run debug title
-    print(consoleInput.formatPrompt(DEBUG_TITLE + "\n"))
+    print(consoleInput.formatPrompt(DEBUG_TITLE.format(rerunMode=RERUN_MODE) + "\n"))
 
-    # set rerun text file argument, preserving the parent process arguments
+    # restore the arguments expected by the normal pipeline
     sys.argv = [sys.argv[FILE_PATH], rerunFilePath] + rerunParentArgs
 
     # set the behavior of the subprocess (wait for user or auto-exit)
     DEBUG_ON_RERUN = isArgumentPresent(DEBUGGING_ARGUMENT_OFFSET, "true")
-
-    # enable re-run fix being used
-    INVERT_YEAR_FALLBACK = True
 
 # valid argument(s)
 if len(sys.argv) >= MINIMUM_ARGUMENT_COUNT and isTextFile(sys.argv[TEXT_FILE_ARGUMENT]):

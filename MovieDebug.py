@@ -12,6 +12,7 @@ import tempfile  # Temp files for subprocess IPC
 import time  # fix out of order open urls
 import webbrowser  # Open url in browser
 from pathlib import Path  # File path handling
+from urllib.parse import quote  # URL encoding
 
 import pandas as pd  # Pandas (dataframes)
 
@@ -20,10 +21,28 @@ from ConsoleInput import BlankMeans  # return value on blank selection
 
 
 class MovieDebug:
+    # SETTINGS
     TAB_OPEN_DELAY = 0.1
+
+    # DON'T WAIT FOR USER INPUT TO CONTINUE
     SKIP_WAIT = True
+
+    # DATA FRAME COL NAMES
     IMDB_COL = "IMDB"
+
+    # DEBUG MENU MESSAGES
     COPIED_TO_CLIPBOARD_MSG = "Current debug CSV results copied to your clipboard."
+
+    # RERUN MODES
+    SEARCH_YEAR_FALLBACK = "search-year fallback"
+    SPOKEN_LANG_SELECTION = "spoken language selection"
+
+    # LANGUAGE SELECTION
+    LANG_CODE_KEY = "iso_639_1"
+    LANG_NAME_KEY = "name"
+    LANG_ENGLISH_NAME_KEY = "english_name"
+    LANG_CODE_TMDB_NO_SPOKEN_LANGUAGE = "xx"
+    LANG_NAME_UNAVAILABLE = "Name Unavailable"
 
     def __init__(
         self,
@@ -95,22 +114,32 @@ class MovieDebug:
         return dfFilled.to_string(justify="left", formatters=formatters, index=index)
 
     def dfToString(self, df):
+        if self.UPPERCASE_CSV_HEADERS:
+            df = df.copy(deep=False)
+            df.columns = df.columns.str.upper()
+
         return (
             self.dfToStringLJust(df, naRep=self.NA_REPLACEMENT_DEBUG_OUTPUT)
             if self.LEFT_JUSTIFY_DEBUG_OUTPUT
             else df.to_string(na_rep=self.NA_REPLACEMENT_DEBUG_OUTPUT)
         )
 
-    def prepareFinalTitleCorrection(self, rowData, oldTitle, debugOut):
-        # open IMDb URL if more info is needed for row correction
-        if imdbUrl := self.extractUrl(rowData.get(self.IMDB_COL)):
+    def askOpenIMDbUrl(self, imdbCellValue, debugOut, *, highlightText=None):
+        if imdbUrl := self.extractUrl(imdbCellValue):
             openIMDbUrlPrompt = self.consoleInput.formatPrompt(
                 "Open the IMDb URL? (Y/N, blank=Y): "
             )
             if self.consoleInput.promptYesNo(
                 openIMDbUrlPrompt, debugOut, onBlank=BlankMeans.Yes
             ):
+                if highlightText:
+                    encodedText = quote(highlightText, safe="").replace("-", "%2D")
+                    imdbUrl = imdbUrl.split("#", 1)[0] + "#:~:text=" + encodedText
                 self.openUrl(imdbUrl)
+
+    def prepareFinalTitleCorrection(self, rowData, oldTitle, debugOut):
+        # open IMDb URL if more info is needed for row correction
+        self.askOpenIMDbUrl(rowData.get(self.IMDB_COL), debugOut)
 
         # preserve transliterated title and movie tags
         titleOnly = oldTitle
@@ -224,14 +253,13 @@ class MovieDebug:
 
         def printTable():
             dfDebug = (
-                buildDfDebug(parsedMovies) if buildDfDebug else parsedMovies.copy()
+                buildDfDebug(parsedMovies)
+                if buildDfDebug
+                else parsedMovies.copy(deep=False)
             )
 
             if self.MATCH_TEXT_FILE_INDEX:
                 dfDebug.index = dfDebug.index + 1
-
-            if self.UPPERCASE_CSV_HEADERS:
-                dfDebug.columns = dfDebug.columns.str.upper()
 
             debugOut.print(f"{debugTitle}\n\n" + self.dfToString(dfDebug))
 
@@ -337,12 +365,13 @@ class MovieDebug:
                     return line.rstrip("\r\n")
         return None
 
-    def promptRerunMovieWithSearchYearFallback(self, parsedMovies, debugOut):
+    def promptRerun(self, parsedMovies, debugOut, rerunMode, *, beforeRerun=None):
         # prompts and titles
         debugOnRerunPrompt = (
             "Enable debugging for the re-run search? (Y/N, blank to skip): "
         )
-        rerunPromptTitle = "\nRe-running line {lineIndex} with search-year fallback:"
+        rerunPromptTitle = "\nRe-running line {lineIndex} with {rerunMode}:"
+        applyChangesPrompt = "\nApply these changes? [Y/N]: "
 
         # keep changes msg's
         rerunDiscardedResult = "\nNo changes were made!"
@@ -363,9 +392,16 @@ class MovieDebug:
             return
         rowIndexStr, firstRow = result
 
+        # run additional provided lambda function before continuing
+        if beforeRerun:
+            rowData = parsedMovies.iloc[int(rowIndexStr) - firstRow]
+            beforeRerun(rowData)
+
         # debug selection
         debugSelection = self.consoleInput.promptYesNo(
-            debugOnRerunPrompt, debugOut, onBlank=BlankMeans.No
+            self.consoleInput.formatPrompt(debugOnRerunPrompt),
+            debugOut,
+            onBlank=BlankMeans.No,
         )
 
         # get original torrent name
@@ -386,6 +422,7 @@ class MovieDebug:
         oldRowData = parsedMovies.loc[oldDfIndex]
 
         # create temp file used to send and receive data from the subprocess.
+        # write original torrent name to tmp file, acts like a single name run.
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
         ) as tmpFile:
@@ -396,7 +433,11 @@ class MovieDebug:
 
         # run re-run subprocess
         scriptPath = str(Path(sys.argv[self.FILE_PATH]).resolve())
-        print(self.consoleInput.formatPrompt(rerunPromptTitle, lineIndex=lineIndex))
+        print(
+            self.consoleInput.formatPrompt(
+                rerunPromptTitle.format(lineIndex=lineIndex, rerunMode=rerunMode)
+            )
+        )
         try:
             # set subprocess arguments
             append = "false"  # cannot append, required step to import result
@@ -410,7 +451,7 @@ class MovieDebug:
             debugOnRerun = "true" if debugSelection else "false"
 
             subprocess.Popen(
-                [sys.executable, scriptPath, "--rerun", tmpPath, tmpPath]
+                [sys.executable, scriptPath, "--rerun", rerunMode, tmpPath, tmpPath]
                 + [append, linkStyle, debugOnRerun],
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             ).wait()
@@ -444,6 +485,7 @@ class MovieDebug:
         if len(newRow) != 1 or not newRow.columns.equals(parsedMovies.columns):
             print(self.consoleInput.formatPrompt(rerunInvalidResult))
             return
+
         newRowData = newRow.iloc[0]
 
         # display old vs new
@@ -456,7 +498,7 @@ class MovieDebug:
 
         # confirm before applying
         if not self.consoleInput.promptYesNo(
-            "\nApply these changes? [Y/N]: ", debugOut
+            self.consoleInput.formatPrompt(applyChangesPrompt), debugOut
         ):
             print(self.consoleInput.formatPrompt(rerunDiscardedResult))
             return
@@ -465,6 +507,95 @@ class MovieDebug:
         parsedMovies.loc[oldDfIndex] = newRowData.values
 
         print(self.consoleInput.formatPrompt(rerunAcceptedResult, lineIndex=lineIndex))
+
+    def promptRerunMovieWithSearchYearFallback(self, parsedMovies, debugOut):
+        return self.promptRerun(parsedMovies, debugOut, self.SEARCH_YEAR_FALLBACK)
+
+    def promptRerunMovieWithSpokenLangSelection(self, parsedMovies, debugOut):
+        return self.promptRerun(
+            parsedMovies,
+            debugOut,
+            self.SPOKEN_LANG_SELECTION,
+            beforeRerun=lambda rowData: self.askOpenIMDbUrl(
+                rowData.get(self.IMDB_COL),
+                debugOut,
+                highlightText="Languages",
+            ),
+        )
+
+    def promptSpokenLanguageSelection(
+        self, spokenLanguages, *, movieTitle, releaseYear, currentLangCode
+    ):
+        dOut = ConsoleDebug()
+
+        spokenLanguagesTitle = "\n\nSpoken Languages - {movieTitle} ({releaseYear}):\n"
+        spokenLanguagesPrompt = 'Select language ({firstOption}-{lastOption}, blank to keep "{currentLangCode}"): '
+        noSpokenLangsMsg = "\nNo spoken languages in TMDb API response for {movieTitle} ({releaseYear}). Keeping {currentLangCode}.\n"
+
+        # clean-up invalid languages
+        spokenLanguages = [
+            language
+            for language in (spokenLanguages or [])
+            if language.get(self.LANG_CODE_KEY)
+            and language[self.LANG_CODE_KEY] != self.LANG_CODE_TMDB_NO_SPOKEN_LANGUAGE
+        ]
+
+        if not spokenLanguages:  # no spoken langs in TMDb response, keep old value
+            selectedLangCode = currentLangCode
+            dOut.print(
+                self.consoleInput.formatPrompt(
+                    noSpokenLangsMsg,
+                    movieTitle=movieTitle,
+                    releaseYear=releaseYear,
+                    currentLangCode=currentLangCode,
+                )
+            )
+        else:  # user selects spoken language from list or keeps old value
+            firstOption = 1
+            lastOption = firstOption + len(spokenLanguages) - 1
+
+            dOut.print(
+                self.consoleInput.formatPrompt(
+                    spokenLanguagesTitle, movieTitle=movieTitle, releaseYear=releaseYear
+                )
+            )
+
+            spokenLanguagesList = ""
+            for number, language in enumerate(spokenLanguages, start=firstOption):
+                langCode = language[self.LANG_CODE_KEY]
+                langName = (
+                    language.get(self.LANG_ENGLISH_NAME_KEY)
+                    or language.get(self.LANG_NAME_KEY)
+                    or self.LANG_NAME_UNAVAILABLE
+                )
+                spokenLanguagesList += f"{number}) {langCode} - {langName}\n"
+            dOut.print(spokenLanguagesList)
+
+            formattedPrompt = self.consoleInput.formatPrompt(
+                spokenLanguagesPrompt,
+                firstOption=firstOption,
+                lastOption=lastOption,
+                currentLangCode=currentLangCode,
+            )
+            selectedLanguage = self.consoleInput.promptNumberInRange(
+                formattedPrompt, dOut, firstOption, lastOption
+            )
+            selectedLangCode = (
+                spokenLanguages[int(selectedLanguage) - firstOption][self.LANG_CODE_KEY]
+                if selectedLanguage
+                else currentLangCode
+            )
+
+            dfCompare = pd.DataFrame(
+                {"Spoken Language": [selectedLangCode, currentLangCode]},
+                index=["NEW", "OLD"],
+            )
+
+            dOut.print("\n" + self.dfToString(dfCompare) + "\n")
+
+        dOut.waitForAnyKey()
+        dOut.clear()
+        return selectedLangCode
 
     def promptOptionsMenu(self, parsedMovies, callerDebugOut, refreshTable=None):
         dout = ConsoleDebug()
@@ -481,6 +612,12 @@ class MovieDebug:
             (
                 "rerun row using original torrent name with TMDb search-year fallback",
                 lambda: self.promptRerunMovieWithSearchYearFallback(parsedMovies, dout),
+            ),
+            (
+                "rerun row using original torrent name with spoken language selection",
+                lambda: self.promptRerunMovieWithSpokenLangSelection(
+                    parsedMovies, dout
+                ),
             ),
             (
                 "Copy current results to clipboard",
