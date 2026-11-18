@@ -4,20 +4,21 @@
 # Used to overcome bad input parsing and bad API data responses.
 
 import os  # System utilities
-import pickle  # read rerun output
+import pickle  # Read rerun output
 import re  # Extract URL
 import subprocess  # Re-run and debug torrent names
 import sys  # System
 import tempfile  # Temp files for subprocess IPC
-import time  # fix out of order open urls
+import time  # Fix out of order open urls
 import webbrowser  # Open url in browser
 from pathlib import Path  # File path handling
 from urllib.parse import quote  # URL encoding
 
 import pandas as pd  # Pandas (dataframes)
+import pyperclip  # Copy search term to clipboard
 
-from ConsoleDebug import ConsoleDebug  # print and clear console output
-from ConsoleInput import BlankMeans  # return value on blank selection
+from ConsoleDebug import ConsoleDebug  # Print and clear console output
+from ConsoleInput import BlankMeans  # Return value on blank selection
 
 
 class MovieDebug:
@@ -125,14 +126,28 @@ class MovieDebug:
         )
 
     def askOpenIMDbUrl(self, imdbCellValue, debugOut, *, highlightText=None):
+        openIMDbPromptText = "Open the IMDb URL? (Y/N, blank=Y): "
+        searchTextCopiedMsg = (
+            '\n**Copied "{highlightText}" to clipboard. If the page doesn\'t auto-scroll to "{highlightText}":\n'
+            '--> Press "Ctrl+F", then "Ctrl+V", then "Enter".\n'
+        )
+
         if imdbUrl := self.extractUrl(imdbCellValue):
-            openIMDbUrlPrompt = self.consoleInput.formatPrompt(
-                "Open the IMDb URL? (Y/N, blank=Y): "
-            )
+            formattedPrompt = self.consoleInput.formatPrompt(openIMDbPromptText)
             if self.consoleInput.promptYesNo(
-                openIMDbUrlPrompt, debugOut, onBlank=BlankMeans.Yes
+                formattedPrompt, debugOut, onBlank=BlankMeans.Yes
             ):
                 if highlightText:
+                    # copy highlight text
+                    pyperclip.copy(highlightText)
+                    print(
+                        self.consoleInput.formatPrompt(
+                            searchTextCopiedMsg, highlightText=highlightText
+                        )
+                    )
+
+                    # set up fragment to auto-scroll to the first instance of
+                    # highlight text
                     encodedText = quote(highlightText, safe="").replace("-", "%2D")
                     imdbUrl = imdbUrl.split("#", 1)[0] + "#:~:text=" + encodedText
                 self.openUrl(imdbUrl)
